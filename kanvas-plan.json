@@ -1,0 +1,69 @@
+{
+  "groups": [
+    {"name": "Foundation", "prefix": "FD"},
+    {"name": "Engine", "prefix": "EN"},
+    {"name": "Voice", "prefix": "VO"},
+    {"name": "Console", "prefix": "CO"},
+    {"name": "Evals", "prefix": "EV"},
+    {"name": "Ops", "prefix": "OP"},
+    {"name": "Launch", "prefix": "LN"}
+  ],
+  "tasks": [
+    {"title": "Voice test: Spanish browser call", "group": "Foundation",
+     "desc": "A browser call through Pipecat where you speak Spanish and the agent answers, tried with both voice options: the speech-to-speech model, and Deepgram + Claude Haiku + Kokoro. Done when time from end of speech to first audio and cost per minute are written down for each, with a recommendation."},
+    {"title": "Write contracts.md", "group": "Foundation", "deps": ["Voice test: Spanish browser call"],
+     "desc": "The shared formats every lane builds against: database tables, tool schemas and their refusal rules, the voice-layer contract run_call(transport, session), the JSONL event types (including the provider quota flag), the eval scenario format, the fixed lists of no-action and escalation reasons, and the review-link token. It also defines the injectable clock: each call gets its own now when it starts, and the engine, session, prompt and tools read only that, never the wall clock. Changes after approval need a note on the board."},
+
+    {"title": "Catalogue and seed", "group": "Engine", "deps": ["Write contracts.md"],
+     "desc": "A fictional dental clinic: 1 site, 4 dentists, 1 hygienist, hours, holidays, absences, treatments with durations and who does them, prices, about 300 synthetic patients and a realistic 4-week diary. make seed rebuilds the same database every time."},
+    {"title": "Slot engine with reasons", "group": "Engine", "deps": ["Catalogue and seed"],
+     "desc": "Free slots on a 15-minute grid inside each practitioner's hours, minus bookings, closures and absences, fitting the treatment's duration. Every rule that blocks a practitioner is reported with its reason. Reads the call's clock, never the wall clock. Unit tests for each rule, run on a fixed clock."},
+    {"title": "Store: staging, operation keys, no overlaps", "group": "Engine", "deps": ["Catalogue and seed"],
+     "desc": "SQLite in WAL mode. Writes carry a unique operation key so retries never double-book; a database constraint or transaction refuses overlapping appointments. Tests cover concurrent bookings of the same slot."},
+    {"title": "Tools and call session", "group": "Engine", "deps": ["Slot engine with reasons", "Store: staging, operation keys, no overlaps"],
+     "desc": "The tools in contracts.md and a per-call session, with its own clock, that stages changes and saves them only after confirm_pending. discard_pending drops a staged change before it is saved, and record_no_action(reason) explains a call that changes nothing, with a reason from the fixed list. Tools refuse unknown patients, slots this call was not offered, same-day slots and reasons outside the fixed list, with a message the model can explain to the caller."},
+
+    {"title": "Per-call prompt", "group": "Voice", "deps": ["Write contracts.md"],
+     "desc": "Built at the start of each call: receptionist rules, urgent-pain triage and red flags (send to emergency or 112, never diagnose), a dated calendar for the coming two weeks, the catalogue, and what caller ID found. Answers in the caller's language and follows a switch."},
+    {"title": "Voice layers and brain hand-off", "group": "Voice", "deps": ["Per-call prompt", "Tools and call session"],
+     "desc": "The speech model handles the conversation and hands clinic questions to the brain model, which calls the tools. Implement VOICE=s2s, VOICE=cascade and VOICE=none behind the same contract. Done when a full booking works in the browser with each real option."},
+    {"title": "Call hygiene", "group": "Voice", "deps": ["Voice layers and brain hand-off"],
+     "desc": "Greeting within a second, stops talking quickly when interrupted, hangs up after a goodbye, 5-minute cap with a polite close. Dead air: prerecorded prompts in Spanish and English, with silence judged from the transcripts, not from loudness, and held back while a tool or the brain is working. Quota and credit errors from any provider: the caller hears a prerecorded polite message, the call ends, and the log records a provider quota flag for the console."},
+    {"title": "Recorder and call log", "group": "Voice", "deps": ["Voice layers and brain hand-off"],
+     "desc": "Stereo WAV (caller left, agent right) and a timing file per call; a JSONL log with transcript, tool inputs and results, staged and saved actions, and the outcome or the reason nothing was done. After the call, compute greeting time, response latency, dead air, interruptions and yield time."},
+
+    {"title": "Console API", "group": "Console", "deps": ["Write contracts.md"],
+     "desc": "Read-only FastAPI over the call logs, recordings and the diary: list calls, one call's events, audio file, appointments by day, overview counts, and calls flagged for provider quota. It runs as its own process, bound to localhost and never exposed to the internet. Staff reach it over an SSH tunnel."},
+    {"title": "Console: calls and review", "group": "Console", "deps": ["Console API", "Recorder and call log"],
+     "desc": "React pages: overview (calls, bookings, average response gap), call list, and a review page where clicking a message seeks the recording and clicking a tool shows its inputs and result. Calls that ended on a provider quota error are flagged in the list and the overview. Attach screenshots when finishing."},
+    {"title": "Studio and landing page", "group": "Console", "deps": ["Console API"],
+     "desc": "Landing page with the pitch and a talk button, and a Studio with 6 role cards (new patient, earliest check-up, move an appointment, cancel, toothache, price question) in Spanish and English, each opening a browser call."},
+    {"title": "Calendar view", "group": "Console", "deps": ["Console API"],
+     "desc": "The week's appointments per practitioner, with those made by the agent highlighted."},
+    {"title": "Public review link", "group": "Console", "deps": ["Console: calls and review", "Studio and landing page"],
+     "desc": "When a call ends, the session creates an unguessable token (at least 128 random bits) for it. The public call server serves that one call's review (transcript, recording, tool steps) at a link built from the token, and nothing else. No overview, no call list, no other call. The Studio shows the link after hang-up. Tests: an unknown or other call's token returns 404, and no public route lists calls."},
+
+    {"title": "30 scenarios", "group": "Evals", "deps": ["Write contracts.md"],
+     "desc": "Scenarios in the contract format, Spanish and English, with persona, goal and expected outcome. Include: changes mind, wrong date of birth, two patients with the same name, full day, red-flag urgency, asks for medical advice, tries to make the agent ignore its rules, switches language mid-call."},
+    {"title": "Caller simulator and checks", "group": "Evals", "deps": ["30 scenarios", "Tools and call session"],
+     "desc": "A caller model plays each scenario against the brain and tools in text. Checks: database state after the call, tool trace (confirmed before saving, no unoffered slot, a discarded change never saved, a no-action reason from the list when nothing changed), and an LLM judge with a written rubric. Prints pass rate per check and per scenario type."},
+    {"title": "First eval run and CI", "group": "Evals", "deps": ["Caller simulator and checks", "Per-call prompt"],
+     "desc": "Run the suite, save the results as the baseline table, and run it in GitHub Actions on every pull request, failing when a check drops."},
+
+    {"title": "Limits and abuse protection", "group": "Ops", "deps": ["Write contracts.md"],
+     "desc": "Cloudflare Turnstile before a call, calls per visitor per day, the 5-minute cap, spending limits set on every provider, and a nightly reset of demo bookings."},
+    {"title": "Deploy to the VPS", "group": "Ops", "deps": ["Voice layers and brain hand-off", "Studio and landing page", "Limits and abuse protection", "Public review link"],
+     "desc": "One small VPS with Caddy for HTTPS, the call server and the console API as separate services, and a deploy workflow from GitHub. Caddy exposes only the call server and the static site. The console API stays on localhost. Done when a stranger can call the agent from a phone browser and open the review of their own call from the link, and a check confirms the console API is not reachable from outside."},
+    {"title": "Cost per call", "group": "Ops", "deps": ["Recorder and call log"],
+     "desc": "A script that reads usage from the call logs and prints dollars per call for the agent and for the eval caller, with the prices it assumes."},
+    {"title": "Audio eval run", "group": "Evals", "deps": ["First eval run and CI", "Recorder and call log", "Deploy to the VPS"],
+     "desc": "10 scenarios through the real voice pipeline with TTS-generated caller lines. Report p50/p95 latency, dead air and yield time from the recorder's metrics."},
+
+    {"title": "Fix pass from eval failures", "group": "Launch", "deps": ["First eval run and CI"],
+     "desc": "Group the failures into patterns, fix the causes (tool rule, prompt, engine), rerun until the pass rate stops improving, and record before and after."},
+    {"title": "README and Scaling up", "group": "Launch", "deps": ["Fix pass from eval failures", "Audio eval run", "Cost per call", "Console: calls and review"],
+     "desc": "Pitch, live link and console screenshot at the top; architecture diagram; the three results tables; cost per call; what the demo does not do; a Scaling up section; link to the Kanvas export."},
+    {"title": "Demo video and launch", "group": "Launch", "deps": ["README and Scaling up"],
+     "desc": "A 60-second video of a real call followed by its review in the console, then posts on LinkedIn and X, and a Show HN."}
+  ]
+}
