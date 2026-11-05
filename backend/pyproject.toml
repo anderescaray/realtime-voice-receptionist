@@ -1,0 +1,28 @@
+[project]
+name = "clinic-voice-agent"
+version = "0.1.0"
+description = "Bilingual voice receptionist for dental clinics: call server, voice layers, clinic engine."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-dotenv>=1.0",
+    "pipecat-ai[anthropic,deepgram,kokoro,silero,webrtc]==1.15.0",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.6", "pytest>=8.0", "pytest-asyncio>=0.24"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

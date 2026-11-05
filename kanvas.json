@@ -35,11 +35,38 @@
     {
       "id": "FD-01",
       "title": "Voice test: Spanish browser call",
-      "state": "todo",
+      "state": "review",
       "group": "FD",
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "A browser call through Pipecat where you speak Spanish and the agent answers, tried with both voice options: the speech-to-speech model, and Deepgram + Claude Haiku + Kokoro. Done when time from end of speech to first audio and cost per minute are written down for each, with a recommendation."
+      "desc": "A browser call through Pipecat where you speak Spanish and the agent answers, tried with both voice options: the speech-to-speech model, and Deepgram + Claude Haiku + Kokoro. Done when time from end of speech to first audio and cost per minute are written down for each, with a recommendation.",
+      "notes": [
+        {
+          "at": "2026-11-05T20:44:14Z",
+          "by": "foundation",
+          "text": "Plan: today only option B (Deepgram STT -> Claude Haiku -> local Kokoro TTS) behind a VOICE= switch, so option A (speech-to-speech) can plug in later without calling OpenAI now. Build a minimal Pipecat WebRTC call server plus a browser page, runnable from WSL and opened in Chrome on Windows. Measure time from end of speech to first audio and cost per minute."
+        },
+        {
+          "at": "2026-11-05T20:57:00Z",
+          "by": "foundation",
+          "text": "Built and checked without paid calls:\n- `make run` in backend/ starts the call server; open http://localhost:7860 in Chrome on Windows. The page shows your mic level, the agent's level and the latency you actually hear on each turn.\n- VOICE=cascade (Deepgram -> Claude Haiku 5.5 -> Kokoro on this machine), VOICE=none (silent stub), VOICE=s2s (placeholder for option A: refuses to start, calls nothing).\n- A headless test caller connected over WebRTC to both the stub and the cascade. With dummy keys, the greeting still played from local Kokoro and the call log recorded latency, usage and the hang-up.\n- Kokoro takes 0.35 s for a short Spanish sentence and 0.8 s for a long one, on 2 or 32 CPU cores alike. It doesn't stream within a sentence, so short first sentences matter.\n- `make costs` prices every logged call: STT per minute, LLM per token, with dated prices.\nStill to do: real calls to measure latency and cost per minute (waiting on the question below)."
+        },
+        {
+          "at": "2026-11-05T20:57:07Z",
+          "by": "foundation",
+          "text": "Question: The next step uses paid APIs: may I run real test calls? I estimate option B at about $0.008-0.009 per call minute, so a 10-minute test session costs about $0.10. New Deepgram accounts get $200 of free credit; Claude Haiku 5.5 costs about $0.0001 per turn. Kokoro runs locally at no charge.\nWhich speech-to-text model for the test?\n(a) Deepgram Flux multilingual, ES+EN, $0.0078/min, with its own end-of-turn detection, which should be the fastest. Recommended.\n(b) Nova-3 Spanish only, $0.0077/min.\n(c) Nova-3 multilingual, $0.0092/min.\n(d) Flux as the default, plus one or two calls on Nova-3 multilingual to compare latency. A few cents more."
+        },
+        {
+          "at": "2026-11-05T21:03:03Z",
+          "by": "foundation",
+          "text": "Answer: real test calls approved for Deepgram and Anthropic only (never OpenAI), total spend under $0.50. STT option d: about 10 scripted calls on Flux multilingual and 2-3 on Nova-3 multilingual."
+        },
+        {
+          "at": "2026-11-05T21:20:18Z",
+          "by": "foundation",
+          "text": "Option B works end to end in Spanish: Deepgram -> Claude Haiku 5.5 -> Kokoro (on this machine). It costs about $0.008 per call minute, but it is slow: the caller hears an answer about 3.4 s after they stop talking (p50). Option A (speech-to-speech) is not measured yet, because it needs OpenAI credit.\n\nHow it was measured: 13 scripted calls (10 on Flux, 3 on Nova-3 multilingual), 51 answered turns, $0.10 spent in all. A scripted caller played Spanish patient lines, voiced with Kokoro, over WebRTC. Total latency is timed at the caller; the stages come from the server's own timeline.\n\n| ms, p50 / p90 | Flux multilingual | Nova-3 multilingual |\n|---|---:|---:|\n| **Heard by the caller** (stops talking -> hears agent) | **3477 / 4473** | **3276 / 4064** |\n| silence wait (VAD) | 200 / 200 | 200 / 200 |\n| final transcript | 515 / 1144 | 202 / 247 |\n| Claude to first text | 830 / 1265 | 792 / 1060 |\n| first sentence complete | 266 / 338 | 208 / 276 |\n| Kokoro first audio | 495 / 1208 | 474 / 635 |\n| outside the server's timeline (*) | 883 / 1897 | 1309 / 1801 |\n| greeting (connected -> first audio) | 2090 / 3086 | 1336 / 1453 |\n\n| cost per call minute | Flux | Nova-3 multi |\n|---|---:|---:|\n| speech-to-text (Deepgram) | $0.0078 | $0.0092 |\n| Claude Haiku 5.5 | $0.0004 | $0.0003 |\n| Kokoro (local) | $0 | $0 |\n| **total** | **$0.0082** | **$0.0095** |\n\n(*) Audio in and out of the server, plus time before the server notices the turn ended. With Flux, most of it is Deepgram's own end-of-turn wait, which the server's timeline does not see. The test harness adds about 0.3 s of round trip; Chrome should add less.\n\nQuality: Flux answered too early once, at the pause after a comma (1 turn in 40). Nova-3 lost the end of one sentence and asked the caller to repeat it (6.5 s).\n\nRecommendation: keep option B as the low-cost fallback, with Flux (cheaper than Nova-3 multilingual, similar latency, Spanish and English). Don't choose a voice option yet: 3.4 s is too slow for a phone call. The next steps, in order of payoff:\n1. Measure option A when OpenAI credit is available.\n2. Make the agent's first sentence short, so Kokoro starts sooner.\n3. Tune Flux's end-of-turn settings.\n4. Try a streaming cloud TTS. That costs money, so I will ask first.\n\nTo check:\n- Make a call from Chrome: `cd backend && make run`, then open http://localhost:7860. The page shows the latency you hear on each turn.\n- `make costs` in backend/ reprints this table from the call logs."
+        }
+      ]
     },
     {
       "id": "FD-02",

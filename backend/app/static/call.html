@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice test call</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { max-width: 40rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
+  button { font-size: 1.1rem; padding: .7rem 1.6rem; border-radius: 2rem; border: 0; cursor: pointer;
+           background: #1f7a4d; color: white; }
+  button.live { background: #b3261e; }
+  button:disabled { opacity: .5; cursor: default; }
+  .meters { display: grid; grid-template-columns: 5rem 1fr; gap: .4rem 1rem; align-items: center; margin: 1.5rem 0; }
+  meter { width: 100%; height: 1rem; }
+  #status { color: GrayText; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  td, th { text-align: left; padding: .25rem .5rem; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<h1>Voice test call</h1>
+<p>Speak Spanish. Each time you stop talking, the page measures how long it takes
+until it hears the agent start answering.</p>
+
+<button id="call">Call</button>
+<span id="status">Not connected</span>
+
+<div class="meters">
+  <span>You</span><meter id="you" max="0.3"></meter>
+  <span>Agent</span><meter id="agent" max="0.3"></meter>
+</div>
+
+<table>
+  <thead><tr><th>Turn</th><th class="num">Heard latency</th></tr></thead>
+  <tbody id="turns"></tbody>
+  <tfoot><tr><th>Median</th><th class="num" id="median">–</th></tr></tfoot>
+</table>
+<audio id="agent-audio" autoplay></audio>
+
+<script>
+// Levels above these count as speech (RMS of the float samples).
+const YOU_SPEAKING = 0.02, AGENT_SPEAKING = 0.01;
+// The agent must stay quiet this long before a new answer counts as a new turn.
+const AGENT_GAP_MS = 700;
+
+const $ = (id) => document.getElementById(id);
+let pc, mic, ping, raf, pcId, audioCtx;
+let lastYouLoud = 0, lastAgentLoud = 0, awaitingAnswer = false;
+const latencies = [];
+
+function setStatus(text) { $("status").textContent = text; }
+
+function analyser(stream) {
+  const node = audioCtx.createAnalyser();
+  node.fftSize = 1024;
+  audioCtx.createMediaStreamSource(stream).connect(node);
+  const buf = new Float32Array(node.fftSize);
+  return () => {
+    node.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (const x of buf) sum += x * x;
+    return Math.sqrt(sum / buf.length);
+  };
+}
+
+function recordTurn(ms) {
+  latencies.push(ms);
+  const row = $("turns").insertRow();
+  row.insertCell().textContent = latencies.length;
+  const cell = row.insertCell();
+  cell.className = "num";
+  cell.textContent = `${ms.toFixed(0)} ms`;
+  const sorted = [...latencies].sort((a, b) => a - b);
+  $("median").textContent = `${sorted[Math.floor(sorted.length / 2)].toFixed(0)} ms`;
+  fetch("/api/heard", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pc_id: pcId, secs: ms / 1000 }),
+  }).catch(() => {});
+}
+
+function watch(youLevel, agentLevel) {
+  const tick = () => {
+    const now = performance.now();
+    const you = youLevel(), agent = agentLevel();
+    $("you").value = you;
+    $("agent").value = agent;
+    if (you > YOU_SPEAKING) { lastYouLoud = now; awaitingAnswer = true; }
+    if (agent > AGENT_SPEAKING) {
+      const newTurn = now - lastAgentLoud > AGENT_GAP_MS;
+      if (newTurn && awaitingAnswer && lastYouLoud < now) {
+        awaitingAnswer = false;
+        recordTurn(now - lastYouLoud);
+      }
+      lastAgentLoud = now;
+    }
+    raf = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+async function waitForIce(pc) {
+  if (pc.iceGatheringState === "complete") return;
+  await new Promise((resolve) => {
+    const done = () => pc.iceGatheringState === "complete" && resolve();
+    pc.addEventListener("icegatheringstatechange", done);
+    setTimeout(resolve, 2000); // host candidates are enough on a local machine
+  });
+}
+
+async function call() {
+  $("call").disabled = true;
+  setStatus("Asking for the microphone…");
+  mic = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  audioCtx = new AudioContext();
+
+  pc = new RTCPeerConnection();
+  // The server expects the audio transceiver first, then video (unused here).
+  pc.addTransceiver(mic.getAudioTracks()[0], { direction: "sendrecv" });
+  pc.addTransceiver("video", { direction: "sendrecv" });
+  const channel = pc.createDataChannel("control");
+  channel.onopen = () => { ping = setInterval(() => channel.send("ping"), 1000); };
+
+  pc.ontrack = (event) => {
+    if (event.track.kind !== "audio") return;
+    const stream = new MediaStream([event.track]);
+    $("agent-audio").srcObject = stream;
+    watch(analyser(mic), analyser(stream));
+  };
+  pc.onconnectionstatechange = () => {
+    setStatus(pc.connectionState === "connected" ? "Connected: say something" : pc.connectionState);
+    if (["failed", "closed"].includes(pc.connectionState)) hangUp();
+  };
+
+  setStatus("Connecting…");
+  await pc.setLocalDescription(await pc.createOffer());
+  await waitForIce(pc);
+  const res = await fetch("/api/offer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+  });
+  if (!res.ok) throw new Error(`server answered ${res.status}`);
+  const answer = await res.json();
+  pcId = answer.pc_id;
+  await pc.setRemoteDescription({ sdp: answer.sdp, type: answer.type });
+  $("call").textContent = "Hang up";
+  $("call").classList.add("live");
+  $("call").disabled = false;
+}
+
+function hangUp() {
+  clearInterval(ping);
+  cancelAnimationFrame(raf);
+  pc?.close();
+  mic?.getTracks().forEach((t) => t.stop());
+  audioCtx?.close();
+  pc = mic = audioCtx = undefined;
+  awaitingAnswer = false;
+  $("call").textContent = "Call";
+  $("call").classList.remove("live");
+  $("call").disabled = false;
+  setStatus("Call ended");
+}
+
+$("call").onclick = () => {
+  if (pc) { hangUp(); return; }
+  call().catch((err) => { hangUp(); setStatus(`Could not connect: ${err.message}`); });
+};
+</script>
+</body>
+</html>
