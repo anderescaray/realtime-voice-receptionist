@@ -35,7 +35,7 @@
     {
       "id": "FD-01",
       "title": "Voice test: Spanish browser call",
-      "state": "proposed",
+      "state": "todo",
       "group": "FD",
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
@@ -44,7 +44,7 @@
     {
       "id": "FD-02",
       "title": "Write contracts.md",
-      "state": "proposed",
+      "state": "todo",
       "group": "FD",
       "deps": ["FD-01"],
       "at": "2026-11-03T20:43:34Z",
@@ -54,7 +54,7 @@
     {
       "id": "EN-01",
       "title": "Catalogue and seed",
-      "state": "proposed",
+      "state": "todo",
       "group": "EN",
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
