@@ -9,8 +9,10 @@ The contract every layer keeps:
 - return when the caller hangs up or the call is cut. Never call `session.finish()`:
   the server does, after the layer returns.
 
-Layers: `cascade` (option B: Deepgram -> Claude -> Kokoro), `s2s` (option A:
-speech-to-speech, not built yet) and `none` (silent stub for plumbing tests).
+Layers: `cascade` (option B: Deepgram -> Claude -> Kokoro), the speech-to-speech
+options `gemini` (A1: Gemini Live) and `openai` (A2: OpenAI GPT-Live-1, not built
+yet), and `none` (silent stub for plumbing tests). app/voice/common.py has the
+plumbing they share.
 """
 
 import importlib
@@ -20,7 +22,7 @@ from pipecat.transports.base_transport import BaseTransport
 from app import config
 from app.session import CallSession
 
-LAYERS = ("cascade", "s2s", "none")
+LAYERS = ("cascade", "gemini", "openai", "none")
 
 
 def load(name: str):

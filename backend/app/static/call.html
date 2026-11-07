@@ -22,7 +22,8 @@
 <body>
 <h1>Voice test call</h1>
 <p>Speak Spanish. Each time you stop talking, the page measures how long it takes
-until it hears the agent start answering.</p>
+until it hears the agent start answering. The greeting is not counted, and an answer
+that starts while you are still talking shows as an overlap, outside the median.</p>
 
 <button id="call">Call</button>
 <span id="status">Not connected</span>
@@ -39,16 +40,13 @@ until it hears the agent start answering.</p>
 </table>
 <audio id="agent-audio" autoplay></audio>
 
-<script>
-// Levels above these count as speech (RMS of the float samples).
-const YOU_SPEAKING = 0.02, AGENT_SPEAKING = 0.01;
-// The agent must stay quiet this long before a new answer counts as a new turn.
-const AGENT_GAP_MS = 700;
+<script type="module">
+import { median, TurnMeter } from "/static/turns.js";
 
 const $ = (id) => document.getElementById(id);
-let pc, mic, ping, raf, pcId, audioCtx;
-let lastYouLoud = 0, lastAgentLoud = 0, awaitingAnswer = false;
+let pc, mic, ping, raf, pcId, audioCtx, meter;
 const latencies = [];
+let rows = 0;
 
 function setStatus(text) { $("status").textContent = text; }
 
@@ -65,15 +63,24 @@ function analyser(stream) {
   };
 }
 
-function recordTurn(ms) {
-  latencies.push(ms);
+function addRow(label, text) {
   const row = $("turns").insertRow();
-  row.insertCell().textContent = latencies.length;
+  row.insertCell().textContent = label;
   const cell = row.insertCell();
   cell.className = "num";
-  cell.textContent = `${ms.toFixed(0)} ms`;
-  const sorted = [...latencies].sort((a, b) => a - b);
-  $("median").textContent = `${sorted[Math.floor(sorted.length / 2)].toFixed(0)} ms`;
+  cell.textContent = text;
+}
+
+function recordTurn({ kind, ms }) {
+  rows += 1;
+  if (kind === "overlap") {
+    // The agent started while you were still talking: not a response time.
+    addRow(rows, "overlap");
+    return;
+  }
+  latencies.push(ms);
+  addRow(rows, `${ms.toFixed(0)} ms`);
+  $("median").textContent = `${median(latencies).toFixed(0)} ms`;
   fetch("/api/heard", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -82,20 +89,13 @@ function recordTurn(ms) {
 }
 
 function watch(youLevel, agentLevel) {
+  meter = new TurnMeter();
   const tick = () => {
-    const now = performance.now();
     const you = youLevel(), agent = agentLevel();
     $("you").value = you;
     $("agent").value = agent;
-    if (you > YOU_SPEAKING) { lastYouLoud = now; awaitingAnswer = true; }
-    if (agent > AGENT_SPEAKING) {
-      const newTurn = now - lastAgentLoud > AGENT_GAP_MS;
-      if (newTurn && awaitingAnswer && lastYouLoud < now) {
-        awaitingAnswer = false;
-        recordTurn(now - lastYouLoud);
-      }
-      lastAgentLoud = now;
-    }
+    const turn = meter.update(performance.now(), you, agent);
+    if (turn) recordTurn(turn);
     raf = requestAnimationFrame(tick);
   };
   tick();
@@ -160,7 +160,6 @@ function hangUp() {
   mic?.getTracks().forEach((t) => t.stop());
   audioCtx?.close();
   pc = mic = audioCtx = undefined;
-  awaitingAnswer = false;
   $("call").textContent = "Call";
   $("call").classList.remove("live");
   $("call").disabled = false;

@@ -25,6 +25,7 @@ npm-debug.log*
 
 # Runtime output: databases, recordings, call logs, downloaded models
 data/
+recordings/
 logs/
 *.log
 models/

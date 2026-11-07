@@ -15,7 +15,7 @@ from pathlib import Path
 
 from app import config
 
-PRICES_AS_OF = "2026-11-05"
+PRICES_AS_OF = "2026-11-07"
 
 # Speech-to-text, US$ per minute of streamed audio (Deepgram pay-as-you-go, streaming).
 # The whole call is streamed, so a call is billed for its full length.
@@ -30,6 +30,14 @@ STT_PER_MIN = {
 # Haiku 5.5 cache rates are assumed at the usual 0.1x / 1.25x of input.
 LLM_PER_MTOK = {
     "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
+}
+
+# Speech-to-speech models, US$ per million tokens by modality (Gemini API paid tier):
+# text in, audio in, text out, audio out. The free tier bills nothing; the report
+# prices free-tier calls at these rates anyway, as what they would cost in production.
+# Gemini reports input tokens gross of its cache, so cached tokens are not added again.
+S2S_PER_MTOK = {
+    "gemini-3.8-live": (0.75, 3.00, 4.50, 12.00),
 }
 
 # Kokoro runs on our own machine: no per-call charge.
@@ -67,10 +75,14 @@ class CallReport:
     call_id: str
     voice: str = "?"
     stt: str = ""
+    s2s: str = ""
     secs: float = 0.0
     stt_usd: float = 0.0
     llm_usd: float = 0.0
     tts_usd: float = 0.0
+    s2s_usd: float = 0.0
+    audio_in_tokens: int = 0
+    audio_out_tokens: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     tts_chars: int = 0
@@ -82,7 +94,7 @@ class CallReport:
 
     @property
     def usd(self) -> float:
-        return self.stt_usd + self.llm_usd + self.tts_usd
+        return self.stt_usd + self.llm_usd + self.tts_usd + self.s2s_usd
 
     @property
     def usd_per_min(self) -> float:
@@ -90,12 +102,32 @@ class CallReport:
 
     @property
     def label(self) -> str:
-        return f"{self.voice}:{self.stt}" if self.stt else self.voice
+        model = self.stt or self.s2s
+        return f"{self.voice}:{model}" if model else self.voice
 
 
 def stt_rate(model: str, language: str) -> float | None:
     key = f"{model}:multi" if model.startswith("nova") and language == "multi" else model
     return STT_PER_MIN.get(key)
+
+
+def s2s_usd(e: dict, r: CallReport) -> float:
+    """Price one speech-to-speech usage event by modality; flags unknown models."""
+    audio_in = e.get("input_audio_tokens") or 0
+    audio_out = e.get("output_audio_tokens") or 0
+    r.input_tokens += e["input_tokens"]
+    r.output_tokens += e["output_tokens"]
+    r.audio_in_tokens += audio_in
+    r.audio_out_tokens += audio_out
+    price = S2S_PER_MTOK.get(e["model"])
+    if price is None:
+        r.unpriced.add(e["model"])
+        return 0.0
+    text_in = max(e["input_tokens"] - audio_in, 0)
+    text_out = max(e["output_tokens"] - audio_out, 0)
+    return (
+        text_in * price[0] + audio_in * price[1] + text_out * price[2] + audio_out * price[3]
+    ) / 1e6
 
 
 def usable(breakdown: dict) -> bool:
@@ -114,6 +146,7 @@ def report(path: Path) -> CallReport:
         if kind == "voice_config":
             r.voice = e.get("voice", "?")
             r.stt = e.get("stt", "")
+            r.s2s = e.get("s2s", "")
             stt_language = e.get("stt_language", stt_language)
         elif kind == "call_ended":
             r.secs = e["duration_secs"]
@@ -144,6 +177,8 @@ def report(path: Path) -> CallReport:
                 + e.get("cache_read_tokens", 0) * price[2]
                 + e.get("cache_write_tokens", 0) * price[3]
             ) / 1e6
+        elif kind == "usage" and e["service"] == "s2s":
+            r.s2s_usd += s2s_usd(e, r)
         elif kind == "usage" and e["service"] == "tts":
             r.tts_chars += e["characters"]
             price = TTS_PER_MCHAR.get(e["model"])
@@ -210,6 +245,14 @@ def group_table(reports: list[CallReport]) -> list[str]:
     row(
         "Greeting (connected -> first audio out)", lambda rs: [r.greeting for r in rs if r.greeting]
     )
+
+    def per_min(attr: str):
+        def cell(rs: list[CallReport]) -> str:
+            minutes = sum(r.secs for r in rs) / 60
+            return f"{sum(getattr(r, attr) for r in rs) / minutes:.4f}"
+
+        return cell
+
     rows.append("")
     rows.append("| | " + " | ".join(names) + " |")
     rows.append("|---|" + "---:|" * len(names))
@@ -224,18 +267,10 @@ def group_table(reports: list[CallReport]) -> list[str]:
             lambda rs: f"{sum(1 for r in rs for t in r.turns if t.heard < 0)}",
         ),
         ("minutes", lambda rs: f"{sum(r.secs for r in rs) / 60:.1f}"),
-        (
-            "STT $/min",
-            lambda rs: f"{sum(r.stt_usd for r in rs) / (sum(r.secs for r in rs) / 60):.4f}",
-        ),
-        (
-            "Claude $/min",
-            lambda rs: f"{sum(r.llm_usd for r in rs) / (sum(r.secs for r in rs) / 60):.4f}",
-        ),
-        (
-            "Kokoro $/min",
-            lambda rs: f"{sum(r.tts_usd for r in rs) / (sum(r.secs for r in rs) / 60):.4f}",
-        ),
+        ("speech-to-text $/min", per_min("stt_usd")),
+        ("language model $/min", per_min("llm_usd")),
+        ("text-to-speech $/min", per_min("tts_usd")),
+        ("speech-to-speech $/min", per_min("s2s_usd")),
         (
             "**total $/min**",
             lambda rs: f"**{sum(r.usd for r in rs) / (sum(r.secs for r in rs) / 60):.4f}**",
@@ -252,7 +287,9 @@ def main(argv: list[str]) -> None:
     if not reports:
         print("no finished calls")
         return
-    print(f"Prices as of {PRICES_AS_OF}.\n")
+    print(
+        f"Prices as of {PRICES_AS_OF}, at paid-tier rates (calls on a free tier were not billed).\n"
+    )
     print(
         f"{'call':12} {'setup':28} {'secs':>5} {'turns':>5} {'heard p50':>9} {'$':>7} {'$/min':>7}"
     )

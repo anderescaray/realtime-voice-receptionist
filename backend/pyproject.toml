@@ -7,7 +7,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "python-dotenv>=1.0",
-    "pipecat-ai[anthropic,deepgram,kokoro,silero,webrtc]==1.15.0",
+    "pipecat-ai[anthropic,deepgram,google,kokoro,silero,webrtc]==1.15.0",
 ]
 
 [dependency-groups]

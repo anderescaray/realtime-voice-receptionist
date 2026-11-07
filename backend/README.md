@@ -20,11 +20,14 @@ start downloads the Kokoro voice (about 330 MB, into `~/.cache/pipecat/kokoro-on
 | VOICE | What it is |
 |---|---|
 | `cascade` | Option B: Deepgram speech-to-text, Claude Haiku, Kokoro speech on this machine |
-| `s2s` | Option A: a speech-to-speech model. Not built yet; refuses to start |
+| `gemini` | Option A1: Gemini Live (`gemini-3.8-live`), speech to speech. Needs `GOOGLE_API_KEY` |
+| `openai` | Option A2: OpenAI GPT-Live-1, speech to speech. Not built yet; refuses to start |
 | `none` | Silent stub for plumbing tests |
 
 Cascade settings: `DEEPGRAM_MODEL` (`flux-general-multi` by default, or `nova-3` with
-`DEEPGRAM_LANGUAGE=multi`), `ANTHROPIC_MODEL`, `KOKORO_VOICE`.
+`DEEPGRAM_LANGUAGE=multi`), `ANTHROPIC_MODEL`, `KOKORO_VOICE`. Gemini settings:
+`GEMINI_MODEL`, `GEMINI_VOICE`. On the Gemini API free tier, Google may use what is
+sent to improve its products, so test it with the scripted callers only.
 
 ## Measure latency and cost
 
@@ -37,4 +40,8 @@ make costs                                                 # latency by stage an
 ```
 
 The scripted caller voices patient lines with Kokoro, plays them over WebRTC and times
-each answer from the end of its own speech to the first agent audio it receives.
+each answer from the end of its own speech to the first agent audio it receives. It
+works with every `VOICE=`, and saves each call as a stereo WAV under
+`recordings/bench/<voice>/<call_id>.wav` (git-ignored): the caller on the left, the
+agent on the right, on one timeline as the caller heard it, so gaps and overlaps are
+audible.

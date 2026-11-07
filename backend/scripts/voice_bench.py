@@ -7,6 +7,15 @@ played into a WebRTC call exactly as a browser would send them. For each turn th
 caller measures the time from the end of its own speech to the first agent audio it
 receives, and reports it to the server, which logs it next to its own measurement.
 Stops before a call would take the measured calls' spend past --max-usd.
+
+Works with every VOICE= (it only talks WebRTC to the server), and saves each call as a
+stereo WAV, printing its path:
+
+    recordings/bench/<voice>/<call_id>.wav    left: the caller, right: the agent
+
+Both channels are laid on one clock, the caller's: each 20 ms frame sits at the moment
+it left the caller or reached it. Silences, slow answers and overlaps sound as they
+happened.
 """
 
 import argparse
@@ -14,8 +23,10 @@ import asyncio
 import fractions
 import hashlib
 import json
+import statistics
 import time
 import urllib.request
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +65,78 @@ CONVERSATIONS = [
 ]
 CALLER_VOICES = ["em_alex", "em_santa"]
 CACHE = config.ROOT / "data" / "bench"
+RECORDINGS = config.ROOT / "recordings" / "bench"
+WAV_RATE = 24_000
+# Frames that arrive this much early (network jitter) still play right after the one
+# before; anything earlier than that is placed at its own time.
+MAX_SLIP_SECS = 0.1
+# Paid-tier cost of one ~1.5 min scripted call, for --max-usd, by voice layer.
+EXPECTED_USD_PER_CALL = {"cascade": 0.0093 * 1.5, "gemini": 0.05}
+
+
+class Tape:
+    """One side of the call: audio chunks with the monotonic time each crossed the caller."""
+
+    def __init__(self) -> None:
+        self.chunks: list[tuple[float, np.ndarray]] = []
+
+    def add(self, at: float, pcm: np.ndarray) -> None:
+        self.chunks.append((at, pcm))
+
+
+def lay_out(
+    chunks: list[tuple[float, np.ndarray]], t0: float, rate: int, max_slip: float = MAX_SLIP_SECS
+) -> np.ndarray:
+    """Place mono int16 chunks on a timeline starting at t0 (silence between them).
+
+    A chunk starts at its own time, unless it arrived up to max_slip early, in which
+    case it follows the previous one: jitter must not cut audio short.
+    """
+    placed: list[tuple[int, np.ndarray]] = []
+    end = 0
+    for at, pcm in chunks:
+        start = max(round((at - t0) * rate), 0)
+        if end - round(max_slip * rate) <= start < end:
+            start = end
+        placed.append((start, pcm))
+        end = start + len(pcm)
+    out = np.zeros(max((s + len(p) for s, p in placed), default=0), np.int16)
+    for start, pcm in placed:
+        out[start : start + len(pcm)] = pcm
+    return out
+
+
+def to_rate(pcm: np.ndarray, rate: int, target: int) -> np.ndarray:
+    if rate == target or not len(pcm):
+        return pcm
+    n = round(len(pcm) * target / rate)
+    return np.interp(np.arange(n) * rate / target, np.arange(len(pcm)), pcm).astype(np.int16)
+
+
+def save_stereo(path: Path, caller: Tape, agent: Tape, rate: int = WAV_RATE) -> Path:
+    """Left: what the caller sent. Right: what it heard. One timeline for both."""
+    t0 = min((c[0] for c in caller.chunks + agent.chunks), default=0.0)
+    left = lay_out([(t, to_rate(p, RATE, rate)) for t, p in caller.chunks], t0, rate)
+    right = lay_out([(t, to_rate(p, RATE, rate)) for t, p in agent.chunks], t0, rate)
+    frames = np.zeros((max(len(left), len(right)), 2), np.int16)
+    frames[: len(left), 0] = left
+    frames[: len(right), 1] = right
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(frames.tobytes())
+    return path
+
+
+def mono_48k(frame: AudioFrame) -> np.ndarray:
+    """A received frame as mono int16 at RATE, whatever its layout and rate."""
+    pcm = frame.to_ndarray().reshape(-1)
+    channels = len(frame.layout.channels)
+    if channels > 1:
+        pcm = pcm.reshape(-1, channels).mean(axis=1).astype(np.int16)
+    return to_rate(pcm.astype(np.int16), frame.sample_rate, RATE)
 
 
 def voice_lines() -> dict[tuple[str, str], np.ndarray]:
@@ -98,6 +181,7 @@ class CallerMic(MediaStreamTrack):
         self._done: asyncio.Future | None = None
         self._start: float | None = None
         self._sent = 0
+        self.tape = Tape()
 
     def say(self, pcm: np.ndarray) -> asyncio.Future:
         self._pcm, self._pos = pcm, 0
@@ -116,6 +200,7 @@ class CallerMic(MediaStreamTrack):
             self._pos += FRAME
             if self._pos >= len(self._pcm) and self._done and not self._done.done():
                 self._done.set_result(time.monotonic())  # last voiced sample leaves now
+        self.tape.add(time.monotonic(), chunk)
         frame = AudioFrame.from_ndarray(chunk.reshape(1, -1), format="s16", layout="mono")
         frame.sample_rate = RATE
         frame.pts = self._sent * FRAME
@@ -132,6 +217,7 @@ class AgentEar:
         self.onset = asyncio.Event()
         self.onset_at = 0.0
         self._quiet = True
+        self.tape = Tape()
 
     async def listen(self, track) -> None:
         while True:
@@ -139,8 +225,10 @@ class AgentEar:
                 frame = await track.recv()
             except Exception:
                 return
-            pcm = frame.to_ndarray().astype(np.float32)
             now = time.monotonic()
+            mono = mono_48k(frame)
+            self.tape.add(now, mono)
+            pcm = mono.astype(np.float32)
             if np.sqrt(np.mean(pcm * pcm)) > VOICED:
                 if self._quiet and now - self.last_voiced > AGENT_DONE_SECS:
                     self.onset_at = now
@@ -164,7 +252,11 @@ def post(port: int, path: str, body: dict) -> dict:
     return json.loads(urllib.request.urlopen(req, timeout=30).read())
 
 
-async def one_call(port: int, lines: list[np.ndarray]) -> tuple[str, list[float]]:
+def get(port: int, path: str) -> dict:
+    return json.loads(urllib.request.urlopen(f"http://localhost:{port}{path}", timeout=10).read())
+
+
+async def one_call(port: int, voice: str, lines: list[np.ndarray]) -> tuple[str, list[float], Path]:
     pc = RTCPeerConnection()
     mic, ear = CallerMic(), AgentEar()
     pc.addTransceiver(mic, direction="sendrecv")
@@ -193,8 +285,11 @@ async def one_call(port: int, lines: list[np.ndarray]) -> tuple[str, list[float]
     heard: list[float] = []
     turns: list[dict] = []
     try:
-        await asyncio.wait_for(ear.onset.wait(), ANSWER_TIMEOUT_SECS)  # the greeting
-        await ear.answer_finished()
+        try:
+            await asyncio.wait_for(ear.onset.wait(), ANSWER_TIMEOUT_SECS)  # the greeting
+            await ear.answer_finished()
+        except TimeoutError:
+            print("  no greeting within the timeout")
         for pcm in lines:
             ear.onset.clear()
             ended = await mic.say(pcm)
@@ -215,8 +310,10 @@ async def one_call(port: int, lines: list[np.ndarray]) -> tuple[str, list[float]
         await pc.close()
         for task in listening:
             task.cancel()
-    (CACHE / f"{answer['call_id']}.turns.json").write_text(json.dumps(turns))
-    return answer["call_id"], heard
+    call_id = answer["call_id"]
+    (CACHE / f"{call_id}.turns.json").write_text(json.dumps(turns))
+    wav = save_stereo(RECORDINGS / voice / f"{call_id}.wav", mic.tape, ear.tape)
+    return call_id, heard, wav
 
 
 async def main() -> None:
@@ -226,24 +323,28 @@ async def main() -> None:
     parser.add_argument("--max-usd", type=float, default=0.40)
     args = parser.parse_args()
 
+    voice_layer = (await asyncio.to_thread(get, args.port, "/health"))["voice"]
+    expected = EXPECTED_USD_PER_CALL.get(voice_layer, 0.0)
     lines = voice_lines()
-    spent, done = 0.0, []
+    spent, done, all_heard = 0.0, [], []
     for i in range(args.calls):
         voice = CALLER_VOICES[i % len(CALLER_VOICES)]
         conversation = CONVERSATIONS[i % len(CONVERSATIONS)]
         pcms = [lines[(voice, text)] for text in conversation]
-        expected = 0.0093 * 1.5  # one call of about 1.5 min at the dearest STT rate
         if spent + expected > args.max_usd:
             print(f"stopping: ${spent:.4f} spent, the next call could pass ${args.max_usd}")
             break
-        call_id, heard = await one_call(args.port, pcms)
+        call_id, heard, wav = await one_call(args.port, voice_layer, pcms)
         await asyncio.sleep(3)  # let the server close the call's log
         r = call_costs.report(Path(config.CALLS_DIR) / f"{call_id}.jsonl")
         spent += r.usd
         done.append(call_id)
+        all_heard += heard
         ms = ", ".join(f"{h * 1000:.0f}" for h in heard)
         print(f"call {i + 1} {call_id}: {r.secs:.0f}s, ${r.usd:.4f}, heard ms [{ms}]")
-    print(f"{len(done)} calls, ${spent:.4f} spent: {' '.join(done)}")
+        print(f"  recording: {wav.relative_to(config.ROOT)}")
+    median = f", heard median {statistics.median(all_heard) * 1000:.0f} ms" if all_heard else ""
+    print(f"VOICE={voice_layer}: {len(done)} calls, ${spent:.4f} at paid-tier rates{median}")
 
 
 if __name__ == "__main__":

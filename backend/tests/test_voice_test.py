@@ -30,10 +30,10 @@ def test_unknown_voice_is_refused():
         voice.load("telepathy")
 
 
-async def test_s2s_refuses_without_calling_a_provider(tmp_path):
+async def test_openai_refuses_without_calling_a_provider(tmp_path):
     session = CallSession.start(calls_dir=tmp_path)
     with pytest.raises(NotImplementedError):
-        await voice.run_call(transport=None, session=session, voice="s2s")  # type: ignore[arg-type]
+        await voice.run_call(transport=None, session=session, voice="openai")  # type: ignore[arg-type]
     assert events(session)[-1]["kind"] == "voice_unavailable"
 
 
@@ -106,3 +106,60 @@ def test_heard_latency_is_paired_with_its_turn_breakdown(tmp_path):
     }
     assert turns[0].outside_server == pytest.approx(0.4)
     assert turns[1].stages == {} and turns[1].outside_server is None
+
+
+def test_gemini_needs_its_key(tmp_path, monkeypatch):
+    from app import config
+    from app.voice import gemini
+
+    monkeypatch.setattr(config, "GOOGLE_API_KEY", "")
+    with pytest.raises(RuntimeError, match="GOOGLE_API_KEY"):
+        gemini.make_llm(CallSession.start(calls_dir=tmp_path))
+
+
+def test_cost_report_prices_speech_to_speech_by_modality(tmp_path):
+    path = tmp_path / "c5.jsonl"
+    usage = {
+        "t": 5,
+        "kind": "usage",
+        "service": "s2s",
+        "model": "gemini-3.8-live",
+        "input_tokens": 1_200_000,  # 1M of it audio, 200k text
+        "output_tokens": 300_000,  # 200k of it audio, 100k text
+        "cache_read_tokens": 500_000,  # inside input_tokens already: not added again
+        "input_audio_tokens": 1_000_000,
+        "output_audio_tokens": 200_000,
+    }
+    lines = [
+        {"t": 0, "kind": "voice_config", "voice": "gemini", "s2s": "gemini-3.8-live"},
+        usage,
+        {"t": 60, "kind": "call_ended", "duration_secs": 60.0},
+    ]
+    path.write_text("\n".join(json.dumps(x) for x in lines))
+    r = call_costs.report(path)
+    assert r.label == "gemini:gemini-3.8-live"
+    assert r.s2s_usd == pytest.approx(0.2 * 0.75 + 1 * 3.00 + 0.1 * 4.50 + 0.2 * 12.00)
+    assert r.stt_usd == 0 and not r.unpriced
+    assert (r.audio_in_tokens, r.audio_out_tokens) == (1_000_000, 200_000)
+
+
+def test_steady_clock_follows_the_monotonic_clock_only(monkeypatch):
+    import time
+
+    from app import steady_clock
+
+    steady = steady_clock.steady_time_module(anchor=1000.0)
+    monkeypatch.setattr(time, "time", lambda: 9e9)  # the wall clock steps far ahead
+    assert 1000.0 <= steady.time() < 1001.0
+    assert steady.monotonic is time.monotonic and steady.sleep is time.sleep
+
+
+def test_steady_clock_reaches_every_pipecat_module_it_names():
+    import importlib
+    import time
+
+    from app import steady_clock
+
+    steady_clock.install()
+    for name in steady_clock.MODULES:
+        assert importlib.import_module(name).time is not time, name

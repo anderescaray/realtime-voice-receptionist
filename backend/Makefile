@@ -5,6 +5,7 @@ run:     ## start the call server on :7860
 
 test:
 	uv run pytest -q
+	node --test tests/js/
 
 lint:
 	uv run ruff check .

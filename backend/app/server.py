@@ -4,6 +4,7 @@
 
 Routes:
     GET  /            the test call page (app/static/call.html)
+    GET  /static/...  its scripts
     POST /api/offer   WebRTC offer -> answer; starts the call
     POST /api/heard   the page's own measure of response latency, logged with the call
     GET  /health
@@ -16,6 +17,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
@@ -26,10 +28,13 @@ from pipecat.transports.smallwebrtc.request_handler import (
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pydantic import BaseModel
 
-from app import config, voice
+from app import config, steady_clock, voice
 from app.session import CallSession
 
 STATIC = Path(__file__).parent / "static"
+
+# Audio pacing and turn timing must not follow a wall clock that steps.
+steady_clock.install()
 
 ACTIVE: dict[str, CallSession] = {}  # by WebRTC peer-connection id
 TASKS: set[asyncio.Task] = set()
@@ -48,6 +53,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
 webrtc = SmallWebRTCRequestHandler()
 
 
