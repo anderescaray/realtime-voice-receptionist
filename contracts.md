@@ -11,7 +11,7 @@ The formats and rules every lane builds against. PLAN.md says what we build and 
 ## 1. Principles that bind every lane
 
 1. **No business rule depends on which voice layer is active.** Identification, slot validity, staging, confirmation, red flags, the silence guard, the call cap and the outcome all live in the session, the tools, the engine or the shared call plumbing (`app/voice/common.py`). A voice layer only moves audio and text, and hands clinic questions to the brain.
-2. **Safety-critical speech is played by code, never generated.** The emergency instruction, silence recovery, quota and technical-failure messages are fixed phrases (§6), played as prerecorded clips. A model may say similar things in its own words, but the guarantee does not rely on it.
+2. **Safety-critical speech is played by code, never generated.** The opening (which says the call is recorded and the caller is talking to an AI), the emergency instruction, silence recovery, quota and technical-failure messages are fixed phrases (§6), played as prerecorded clips. A model may say similar things in its own words, but the guarantee does not rely on it.
 3. **Tools never raise.** Every tool returns a JSON object. A refusal is a normal result with an error code from a closed list and a message the model can say to the caller in its own words.
 4. **Every call reads one clock** (§2). No code under `backend/engine/`, and no code in `app/session.py`, `app/tools.py`, `app/prompt.py` or `app/clinic.py`, reads the wall clock.
 5. **Closed vocabularies are closed.** Reason codes, topics, treatments, error codes and event kinds are listed here. A value outside the list is refused, never stored.
@@ -24,7 +24,7 @@ There are two clocks, for two different jobs.
 
 | Clock | What it is | Who reads it | Status |
 |---|---|---|---|
-| **Call clock** `session.now` | A timezone-aware `datetime` in the clinic's zone (`Europe/Madrid`), fixed when the call starts and constant for the whole call. Tests and evals pass it in: `CallSession.start(now=...)`. | Engine, session, tools, prompt, catalogue: anything about dates, "today", "tomorrow", same-day rules, the dated calendar | Built (fixed at start). To build: clinic zone instead of UTC (EN-04) |
+| **Call clock** `session.now` | A timezone-aware `datetime` in the clinic's zone (`Europe/Madrid`), fixed when the call starts and constant for the whole call. Tests and evals pass it in: `CallSession.start(now=...)`. | Engine, session, tools, prompt, catalogue: anything about dates, "today", "tomorrow", same-day rules and the urgency lead time, the dated calendar | Built (fixed at start). To build: clinic zone instead of UTC (EN-04) |
 | **Timing clock** | `time.monotonic()`, as seconds since the call started. It is the `t` of every log event (§8) and sample 0 of the recording (§9). | Call log, recorder, silence guard, dead-air prompts, call cap, metrics | Built |
 
 Rules:
@@ -53,6 +53,8 @@ The choice of primary and fallback is provisional until VO-05 measures A2 in the
 
 **Primary is a production intent, not the code default.** `config.VOICE` stays `cascade` by default until the Gemini paid tier is in place and VO-05 decides, because on the free tier Google may use the audio (scripted callers only). Automatic failover from primary to fallback is not in the MVP. (Decision D12.)
 
+**Launch requirement: no free tier on public calls.** The public demo may go live only when every provider a public call reaches (speech-to-speech, speech-to-text, brain, text-to-speech) runs on terms under which the provider does not use call data to train or improve its models. A free tier whose terms allow that use is fine for scripted bench callers and must never serve a visitor. OP-02 checks this before launch and records, per provider, the plan and the terms relied on. (Decision D10.)
+
 An unknown `VOICE` value is refused with the list of allowed values. Today that happens when the first call loads the layer; to build (VO-02): the call server checks `VOICE` at start-up and refuses to start.
 
 ### 3.2 The contract
@@ -65,7 +67,7 @@ async def run_call(transport: BaseTransport, session: CallSession) -> None
 
 A layer must:
 
-1. Greet the caller with `session.greeting` as soon as the transport connects.
+1. Let the plumbing play the `greeting` clip (§6) as soon as the transport connects, and not generate a greeting of its own. The clip tells the caller that the call is recorded and that they are talking to an AI, so that statement never depends on a model. Built today: the model speaks `session.greeting`, without the disclosure. To build (VO-03): the clip.
 2. Use `session.instructions()` as its system prompt (the per-call prompt, VO-01).
 3. Hand every clinic question to the brain (§4). The speech-to-speech layers get exactly one tool, `ask_clinic`; the cascade gets the clinic tools directly (§4.3).
 4. Log both sides' speech as `transcript` events with `role` `"caller"` or `"agent"` (§8). Caller transcripts are required: red-flag detection, the silence guard and dead-air prompts all read them.
@@ -81,8 +83,8 @@ The `none` stub is exempt from 1 to 7: it says nothing, has no prompt, no brain,
 | Field | Type | Set by | Rule |
 |---|---|---|---|
 | `session.now` | aware `datetime` | `CallSession.start()` | §2. Never changes during the call |
-| `session.greeting` | str | session | Spanish by default |
-| `session.language` | `"es"` \| `"en"` | voice layer, through `session.set_language(lang)` | Starts as `"es"`. The cascade sets it from the speech-to-text language tag of each final caller transcript; the speech-to-speech layers from the `language` of each `ask_clinic`. A change is logged as `language_changed`. Tools, the brain and fixed phrases read it; nothing else writes it |
+| `session.greeting` | str | session | The text of the `greeting` clip in the starting language, logged as the first agent `transcript` |
+| `session.language` | `"es"` \| `"en"` | call server at start; then the voice layer, through `session.set_language(lang)` | Starts as the language of the page the call came from (`es` if none), so the opening disclosure is in a language the visitor reads. The cascade sets it from the speech-to-text language tag of each final caller transcript; the speech-to-speech layers from the `language` of each `ask_clinic`. A change is logged as `language_changed`. Tools, the brain and fixed phrases read it; nothing else writes it |
 
 ### 3.4 What the shared plumbing gives every layer (to build in VO-02 and VO-03)
 
@@ -137,14 +139,16 @@ The brain runs a tool loop (at most 6 tool calls per request) and returns:
 | Concern | Voice model prompt | Brain prompt | Code |
 |---|---|---|---|
 | Persona, language, short spoken replies | yes | – | – |
-| Receptionist rules, dated calendar, catalogue, caller-ID facts | – | yes | built per call (VO-01) |
+| Receptionist rules, dated calendar, catalogue | – | yes | built per call (VO-01) |
 | Identification, slot validity, staging, confirmation | – | asked to follow them | enforced (§5) |
 | Urgent pain triage questions | – | yes | triage required before an urgency slot (§5) |
 | Red flags → 112 | may mention it | yes | **guaranteed** (§6.2) |
 
 ### 4.3 The cascade
 
-In the cascade the text model already reads the caller's words, so it **is** the brain: it gets the clinic tools (§5) directly, with the brain prompt plus the spoken-reply rules. There is no second hop. Every rule in §5, §6 and §7 applies unchanged, because they are in code. (See Decisions for review, D6.)
+In the cascade the text model already reads the caller's words, so it **is** the brain: it gets the clinic tools (§5) directly. There is no second hop. Every rule in §5, §6 and §7 applies unchanged, because they are in code. (Decision D6.)
+
+**Same brain everywhere.** The cascade uses the same brain prompt (built by VO-01) and the same `tools_for_session` / `call_tool` as the brain behind `ask_clinic`, with one addition only: a block of spoken-reply rules appended at the end. It must not fork the prompt or the tool list. So the text evals (§12), which run that brain and those tools, test the decisions of both voice options.
 
 ---
 
@@ -164,13 +168,14 @@ In the cascade the text model already reads the caller's words, so it **is** the
 The session keeps, for the current call only:
 
 - `patients_seen`: every patient returned by `find_patient`, and patients registered in this call.
+- `last_caller_text`: the latest final caller transcript (§7.1) and when it was logged, read by `confirm_pending`.
 - `identified`: at most one patient, the one the call acts for (rule below).
 - `slots_offered`: every slot returned by `search_availability`, with its practitioner, start, end and treatment.
 - `appointments_seen`: every appointment returned by `list_appointments`.
 - `triage`: the last `record_triage` answers, if any.
 - `pending`: at most one staged change.
 
-**Identification rule.** A patient becomes `identified` when `find_patient` returned exactly that one patient and either the date of birth given matched, or the caller-ID phone matched the patient's phone and the name given matched. A patient registered in this call is identified. A new `find_patient` that returns a different single match replaces the identified patient only if no change is pending. (Decision D7.)
+**Identification rule.** A patient is always identified by name plus date of birth, and by nothing else. A patient becomes `identified` when, among the matches `find_patient` returned, exactly one has `dob_matches: true`. A patient registered in this call is identified. A later `find_patient` that identifies a different patient replaces the identified one only if no change is pending. Caller ID is not used, logged or passed to the prompt; using it is a phase 2 topic. (Decision D7.)
 
 ### 5.3 The tools
 
@@ -178,33 +183,37 @@ Refusal codes are listed in §5.4.
 
 | Tool | Parameters | Does | Refuses with |
 |---|---|---|---|
-| `find_patient` | `name?` string, `dob?` date (`YYYY-MM-DD`), `phone?` string | Up to 3 matches: `patient_id`, first name, first surname, `dob_matches` (bool, only if a dob was given), `phone_matches` (bool). Never returns a dob or phone the caller did not give. More than 3 matches → `too_many_matches` with a hint for what to ask. Sets `identified` per §5.2 | `bad_arguments` (no argument given) |
+| `find_patient` | `name` string, `dob` date (`YYYY-MM-DD`), both required | Up to 3 patients whose name matches: `patient_id`, first name, first surname, `dob_matches` (bool). Never returns a date of birth or phone. More than 3 name matches → `too_many_matches` with a hint for what to ask (e.g. the second surname). Sets `identified` per §5.2 | `bad_arguments` (a field missing), `bad_dob` |
 | `register_patient` | `first`, `last1`, `last2?`, `dob`, `phone` | **Stages** a new patient as the pending change; returns a provisional `patient_id` (`p_new1`) usable by `book` in this call, and identifies that patient. A `book` for it **extends the same pending change** to `register + book` instead of staging a second one. `confirm_pending` saves registration-only or registration plus booking, in one transaction | `lookup_first` (no `find_patient` in this call), `already_registered` (an exact name + dob match exists), `pending_exists`, `bad_phone`, `bad_dob` |
 | `list_appointments` | `patient_id` | The patient's appointments from `session.now` on, status `booked` | `not_identified`, `wrong_patient` |
-| `search_availability` | `treatment` (§5.5), `practitioner_id?`, `after?` date, `before?` date, `part_of_day?` `morning`\|`afternoon` | Up to 5 slots, earliest first, plus `blocked`: one entry per practitioner who can do the treatment but has no slot in the range, with `reasons` from §5.6. Window: from tomorrow to 28 days ahead (`BOOKING_HORIZON_DAYS`) | `unknown_treatment`, `unknown_practitioner`, `bad_range`, `triage_required` (treatment `urgency` and no `record_triage` yet) |
-| `book` | `slot_id`, `patient_id`, `treatment` | Stages a booking; returns a summary to read back | `not_identified`, `wrong_patient`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `patient_overlap`, `pending_exists`, `triage_required` |
-| `move` | `appointment_id`, `slot_id` | Stages a move to a slot for the same treatment | `appointment_not_seen`, `not_identified`, `wrong_patient`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `appointment_started`, `pending_exists` |
+| `search_availability` | `treatment` (§5.5), `practitioner_id?`, `after?` date, `before?` date, `part_of_day?` `morning`\|`afternoon` | Up to 5 slots, earliest first, plus `blocked`: one entry per practitioner who can do the treatment but has no slot in the range, with `reasons` from §5.6. Window: from tomorrow to 28 days ahead (`BOOKING_HORIZON_DAYS`); for `urgency` only, it also includes today's slots that start at least `URGENCY_MIN_LEAD_MINUTES` after `session.now` (same-day rule below). Each slot carries `same_day` (bool) | `unknown_treatment`, `unknown_practitioner`, `bad_range`, `triage_required` (treatment `urgency` and no `record_triage` yet) |
+| `book` | `slot_id`, `patient_id`, `treatment` | Stages a booking; returns a summary to read back | `not_identified`, `wrong_patient`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `too_soon`, `patient_overlap`, `pending_exists`, `triage_required` |
+| `move` | `appointment_id`, `slot_id` | Stages a move to a slot for the same treatment | `appointment_not_seen`, `not_identified`, `wrong_patient`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `too_soon`, `appointment_started`, `pending_exists` |
 | `cancel` | `appointment_id` | Stages a cancellation | `appointment_not_seen`, `not_identified`, `wrong_patient`, `appointment_started`, `pending_exists` |
-| `confirm_pending` | – | Saves the staged change (and a staged registration with it) in one transaction, with its operation key. A retry of the same change returns the first result with `already_saved: true` | `nothing_pending`, `no_caller_reply` (no caller transcript logged after the change was staged), `slot_taken` (lost a race; the change is discarded) |
+| `confirm_pending` | – | Saves the staged change (and a staged registration with it) in one transaction, with its operation key. A retry of the same change returns the first result with `already_saved: true` | `nothing_pending`, `no_caller_reply` (no caller transcript logged after the change was staged), `caller_said_no` (the latest final caller turn contains a clear negative, §5.9; the change stays pending), `slot_taken` (lost a race; the change is discarded) |
 | `discard_pending` | – | Drops the staged change (and a staged registration) | `nothing_pending` |
 | `record_triage` | `pain` bool, `swelling` bool, `fever` bool, `breathing_difficulty` bool, `trauma` bool, `heavy_bleeding` bool | Stores the answers. If any red flag (§6.2) is true, code plays `emergency`, logs an escalation, and the result says so | `bad_arguments` |
-| `take_message` | `name`, `phone`, `text` | Saves a callback message at once (not staged) | `bad_phone`, `bad_arguments` |
+| `take_message` | `name`, `phone`, `text`, `urgent?` bool (default false) | Saves a callback message at once (not staged). `urgent: true` marks it for staff as an urgent-pain callback (same-day rule below) | `bad_phone`, `bad_arguments` |
 | `record_no_action` | `reason` (§5.7) | Records why the call changed nothing. Can be called again; the last one wins | `unknown_reason`, `change_saved` (a change was already saved in this call) |
 | `clinic_info` | `topic` `hours`\|`location`\|`prices`\|`insurance`\|`treatments`\|`payment`\|`contact` | Catalogue text for the topic, nothing else | `unknown_topic` |
 | `escalate` | `reason` (§5.8), `urgency` `emergency`\|`urgent`\|`routine` | Logs an escalation. `urgency: emergency` makes code play `emergency` (once per call) | `unknown_reason`, `bad_arguments` |
 
 Rules that apply across tools:
 
-- **Same day.** A slot whose start date is `session.now.date()` is never offered and never accepted (`same_day`). This includes urgency. (Decision D1.)
+- **Same day.** (Decision D1.)
+  - For every treatment except `urgency`, a slot whose start date is `session.now.date()` is never offered and never accepted (`same_day`).
+  - For `urgency`, a same-day slot is offered and accepted only if it starts at least `URGENCY_MIN_LEAD_MINUTES` (default 120) after `session.now`; an earlier one is refused with `too_soon`. The lead time is measured from the call clock, never the wall clock, so tests and evals give the same answer every run. Because `session.now` is fixed at the start, a call that lasts a few minutes measures the lead from its start; the call cap keeps the difference under 5 minutes.
+  - A saved same-day urgency booking is flagged for staff: the appointment row has `same_day_urgent = 1` (§10), the call's outcome carries the `same_day_urgent` flag (§8), and the console shows both (CO-01, CO-02, CO-04).
+  - If an urgency search finds no slot today, the agent offers a callback and takes it with `take_message(..., urgent: true)`; the outcome carries the `urgent_callback` flag. It may also offer the earliest later urgency slot if the caller prefers one.
 - **One pending change at a time.** A second staging call while one is pending returns `pending_exists`; the model must confirm or discard first. The only exception is `book` for a patient registered in the pending change, which extends it (see `register_patient`). Discarding drops the whole pending change, registration included.
 - **The call acts for one patient.** Every tool that takes a `patient_id` (`list_appointments`, `book`) refuses any id other than `identified` with `wrong_patient`; `move` and `cancel` refuse an appointment that does not belong to `identified` with the same code.
 - **Re-check on save.** `confirm_pending` re-checks the slot inside the write transaction. The database's overlap guard (§10) is the last line, not the first.
 - **A staged change that is never confirmed is never saved.** At `finish()`, any pending change is discarded and logged as `discarded` with `by: "finish"`.
-- **Confirmation needs a caller turn.** `confirm_pending` needs at least one caller transcript logged after the change was staged. This does not prove the caller said yes; it stops the model from confirming in the same breath as staging. The eval judge checks the yes itself.
+- **Confirmation needs a caller turn, and not a "no".** `confirm_pending` needs at least one caller transcript logged after the change was staged (`no_caller_reply`), and is refused with `caller_said_no` if the latest final caller turn contains a clear negative (§5.9). Neither check proves the caller said yes: the first stops the model from confirming in the same breath as staging, the second from confirming on a refusal or a "wait". The eval judge checks the yes itself. (Decision D11.)
 
 ### 5.4 Error codes
 
-`bad_arguments`, `too_many_matches`, `lookup_first`, `already_registered`, `bad_phone`, `bad_dob`, `not_identified`, `wrong_patient`, `unknown_treatment`, `unknown_practitioner`, `bad_range`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `patient_overlap`, `pending_exists`, `triage_required`, `appointment_not_seen`, `appointment_started`, `nothing_pending`, `no_caller_reply`, `change_saved`, `unknown_reason`, `unknown_topic`, `store_unavailable`.
+`bad_arguments`, `too_many_matches`, `lookup_first`, `already_registered`, `bad_phone`, `bad_dob`, `not_identified`, `wrong_patient`, `unknown_treatment`, `unknown_practitioner`, `bad_range`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `too_soon`, `patient_overlap`, `pending_exists`, `triage_required`, `appointment_not_seen`, `appointment_started`, `nothing_pending`, `no_caller_reply`, `caller_said_no`, `change_saved`, `unknown_reason`, `unknown_topic`, `store_unavailable`.
 
 `store_unavailable` is returned when the database cannot be written (locked past its busy timeout, disk error). Nothing is saved; the pending change stays pending, so the model can retry `confirm_pending` once.
 
@@ -214,7 +223,7 @@ Rules that apply across tools:
 
 ### 5.6 Blocking reasons (`search_availability.blocked[].reasons`)
 
-`not_working_that_day`, `absent`, `clinic_closed`, `fully_booked`, `outside_part_of_day`, `patient_busy` (the patient has an appointment at that time), `beyond_horizon`.
+`not_working_that_day`, `absent`, `clinic_closed`, `fully_booked`, `outside_part_of_day`, `patient_busy` (the patient has an appointment at that time), `beyond_horizon`, `within_lead_time` (`urgency` only: today's remaining free time starts less than `URGENCY_MIN_LEAD_MINUTES` from now).
 
 Each reason may carry `dates` (the dates it applies to) and `until` (for absences).
 
@@ -239,27 +248,50 @@ The first six are from PLAN.md. `emergency_referred`, `technical_failure` and `c
 
 `red_flag_breathing`, `red_flag_swelling_fever`, `red_flag_trauma`, `red_flag_bleeding`, `medical_advice_request`, `wants_human`, `complaint`, `other`.
 
+### 5.9 Clear negatives (`caller_said_no`)
+
+`confirm_pending` checks the latest final caller transcript against one bilingual list, in both languages whatever `session.language` is (a caller may switch mid-sentence). The list lives in one module, `app/negatives.py` (EN-04):
+
+- **Spanish:** `no`, `mejor no`, `todavía no`, `aún no`, `espera`, `espere`, `un momento`, `cancela`, `cancele`, `cancelar`, `olvídalo`, `olvídelo`, `déjalo`, `déjelo`.
+- **English:** `no`, `nope`, `not yet`, `wait`, `hold on`, `cancel`, `don't`, `do not`, `never mind`, `stop`.
+
+Matching: lowercase the text, strip accents (so `aun no` matches `aún no`), turn every character that is not a letter, digit or apostrophe into a space, then look for each entry as a whole word or a whole run of words. `no` matches "No, el jueves no" and "¡NO!", never "noviembre" or "nota"; `cancel` never matches "cancellation".
+
+The list errs towards refusing: "sí, no hay problema" or "yes, don't worry" are refused. That is accepted, because a false refusal only makes the agent ask again, while a missed "no" saves a change the caller did not want. A refused confirmation leaves the change pending; once the caller answers again, the next `confirm_pending` reads that newer turn.
+
+EN-04 ships unit tests for the list: every entry triggers on its own and inside a sentence in its language; case, accents and punctuation do not matter; whole-word matching holds (`noviembre`, `nota`, `cancellation`, `waiter` do not trigger); clear yeses ("sí", "vale, perfecto", "sí, por favor", "yes please", "that's fine") pass; and the known false refusals above are asserted as refused, so a change to that behaviour is deliberate.
+
 ---
 
 ## 6. Fixed phrases
 
 ### 6.1 The catalogue
 
-Prerecorded clips, one per phrase and language, at `backend/app/voice/clips/<id>.<lang>.wav` (mono, 16-bit, 24 kHz). They are generated once from the text below with the local Kokoro voice (`make clips`) and committed, so they play even when every provider is down. The text in this table is the source; change it here and regenerate.
+Prerecorded clips, one per phrase and language, at `backend/app/voice/clips/<id>.<lang>.wav` (mono, 16-bit, 24 kHz). They are generated from the text below with the local Kokoro voice (`make clips`) and committed, so they play even when every provider is down. The text in this table is the source; change it here and regenerate.
 
 | ID | When | Spanish | English |
 |---|---|---|---|
-| `emergency` | Red flag detected (§6.2) | Por lo que me cuenta, necesita atención urgente. Llame ahora al uno uno dos o vaya a urgencias del hospital más cercano. | From what you describe, you need urgent care. Please call one one two now, or go to the nearest hospital emergency department. |
+| `greeting` | Transport connects (§3.2) | Hola, ha llamado a {clinic_name}. Soy un asistente de inteligencia artificial y esta llamada se graba. ¿En qué puedo ayudarle? | Hello, you've reached {clinic_name}. I'm an AI assistant, and this call is recorded. How can I help you? |
+| `emergency` | Red flag detected (§6.2) | En caso de dificultad para respirar, hinchazón con fiebre, un golpe fuerte en la cara o la boca, o una hemorragia que no para, llame ahora al uno uno dos o vaya a urgencias. | If you have trouble breathing, swelling with fever, a hard blow to the face or mouth, or bleeding that won't stop, call one one two now or go to an emergency department. |
 | `recover` | Silence guard, first step (§7) | Perdone, un segundo. | Sorry, one moment. |
 | `hold` | Brain still working after `HOLD_PHRASE_SECS` | Un momento, lo estoy mirando. | One moment, I'm checking. |
 | `still_there` | Dead air after the agent spoke (§7.4) | ¿Sigue ahí? | Are you still there? |
-| `technical_close` | Silence guard failed, provider error, brain down for good | Lo siento, tenemos un problema técnico. Por favor, vuelva a llamar en unos minutos. Hasta luego. | I'm sorry, we're having a technical problem. Please call again in a few minutes. Goodbye. |
+| `technical_close` | Silence guard failed, provider error (quota included), brain down for good | Lo siento, tenemos un problema técnico. Puede llamar a la clínica al {clinic_phone}. En caso de urgencia, llame al uno uno dos. Hasta luego. | I'm sorry, we're having a technical problem. You can call the clinic on {clinic_phone}. If it's urgent, call one one two. Goodbye. |
 | `cap_close` | Call cap reached | Tenemos que terminar la llamada. Si necesita algo más, vuelva a llamar. Gracias, hasta luego. | We need to end the call now. If you need anything else, please call again. Thank you, goodbye. |
 | `idle_close` | Dead air after the last `still_there` | Como no le oigo, voy a colgar. Vuelva a llamar cuando quiera. Hasta luego. | I can't hear you, so I'll hang up now. Please call again any time. Goodbye. |
 
-The language is `session.language` (`es` or `en`, default `es`), set from the caller's transcripts by the voice layer: the speech-to-text language tag in the cascade, the `language` of the last `ask_clinic` in the speech-to-speech layers. Every change is logged as `language_changed`.
+The language is `session.language` (`es` or `en`): at the start the page's language (`es` if none), which is the one `greeting` plays in; then set from the caller's transcripts by the voice layer: the speech-to-text language tag in the cascade, the `language` of the last `ask_clinic` in the speech-to-speech layers. Every change is logged as `language_changed`.
 
-No phrase may contain a word that could be heard as agreement ("sí", "vale", "de acuerdo", "yes", "okay"), so a phrase can never be taken for a yes to a staged change.
+No phrase may contain a word that could be heard as agreement ("sí", "vale", "de acuerdo", "yes", "okay"), so a phrase can never be taken for a yes to a staged change. Spanish "si" (if) counts, because spoken it is "sí": hence "En caso de..." in `emergency` and `technical_close`.
+
+**Placeholders.** Two phrases carry clinic facts, filled in from the `site` row (§10) when the clips are generated, never at call time:
+
+- `{clinic_name}`: `site.name`, as written.
+- `{clinic_phone}`: `site.phone` (E.164), spoken by `spoken_phone(phone, lang)` in `app/clinic.py`: the country code dropped for a Spanish number, then the nine digits read one by one in three groups of three, in the clip's language ("nueve uno cero, ..."; "nine one zero, ..."). The same function gives the brain the spoken number for `clinic_info(contact)`, so the clip and the agent say it the same way.
+
+`make clips` reads the `site` row from the seeded database, renders every phrase, and writes `clips/manifest.json` with each clip's rendered text and its SHA-256. A test (VO-03) renders the table from the seed and fails if any rendered text differs from the manifest, so a changed name or number cannot ship with stale clips. The call server runs the same comparison at start-up and refuses to start on a mismatch. The seeded number (EN-01) must be one that cannot reach a real person or business.
+
+**Emergency phrase is conditional.** `emergency` names the red flags and says what to do *if* the caller has one, so it stays sensible when the matcher fires on a false alarm (§6.2), and it is still the right instruction when triage confirmed a red flag.
 
 ### 6.2 Emergencies: guaranteed by code
 
@@ -267,7 +299,9 @@ The speech-to-speech model handled a toothache in FD-01 without ever mentioning 
 
 1. **The brain's triage:** `record_triage` with `breathing_difficulty`, `trauma` or `heavy_bleeding` true, or `swelling` and `fever` both true.
 2. **The brain's escalation:** `escalate` with `urgency: emergency`.
-3. **A transcript matcher in code**, run on every final caller transcript, independent of both models. It matches fixed phrase lists per language (`app/redflags.py`, VO-01) for trouble breathing, swelling with fever, a blow or accident to the face or mouth, and bleeding that will not stop. It is tuned to miss nothing in the eval scenarios; a false alarm costs one unnecessary sentence. (Decision D2.)
+3. **A transcript matcher in code**, run on every final caller transcript, independent of both models. It matches fixed phrase lists per language (`app/redflags.py`, VO-01) for trouble breathing, swelling with fever, a blow or accident to the face or mouth, and bleeding that will not stop. It is tuned to miss nothing in the eval scenarios; a false alarm costs one conditional sentence that does not claim the caller is in danger. (Decision D2.)
+
+**Clinical sign-off.** The red-flag list (the triage fields, the matcher's phrase lists and the `emergency` text) is a demo default written without clinical review. Before any real clinic uses the agent, a licensed dentist must validate it, and the validation is recorded in the repository with the reviewer's role and date. (Decision D13.)
 
 What happens, whichever trigger fires first:
 
@@ -348,6 +382,7 @@ Separate from the response guard. When the agent's audio has ended and no caller
 | `HANGUP_GRACE_SECS` | 3 | Goodbye → hang up |
 | `MAX_CALL_SECS` | 300 | Call cap (built) |
 | `BOOKING_HORIZON_DAYS` | 28 | Furthest day `search_availability` offers |
+| `URGENCY_MIN_LEAD_MINUTES` | 120 | Shortest time from `session.now` to a same-day `urgency` slot (§5.3) |
 | `REVIEW_LINK_DAYS` | 7 | Review link lifetime (§11) |
 
 The 5 s default sits above the cascade's p90 heard latency in FD-01 (3.3 s, before overlap reporting) and well below the 8-12 s silences it must catch.
@@ -370,7 +405,7 @@ The log is private: it holds transcripts and patient data. Only the console API 
 
 | kind | Fields | Status |
 |---|---|---|
-| `call_started` | `schema`, `now` (call clock, ISO), `monotonic`, `voice`, `channel` (`browser`\|`bench`\|`eval`\|`phone`), `caller_phone?` | Built (no `schema` yet) |
+| `call_started` | `schema`, `now` (call clock, ISO), `monotonic`, `voice`, `channel` (`browser`\|`bench`\|`eval`\|`phone`), `language` (starting language) | Built (no `schema` or `language` yet) |
 | `voice_config` | `voice` plus the layer's models and voice names | Built |
 | `transcript` | `role` `caller`\|`agent`, `text`, `interrupted?` (agent), `language?` | Built |
 | `language_changed` | `language` | To build |
@@ -386,7 +421,7 @@ The log is private: it holds transcripts and patient data. Only the console API 
 | `discarded` | `change`, `operation_key`, `by` (`tool`\|`finish`\|`race`) | To build |
 | `triage` | the six answers, `red_flags[]` | To build |
 | `escalation` | `reason`, `urgency`, `trigger`, `repeat?` | To build |
-| `message_taken` | `message_id` | To build |
+| `message_taken` | `message_id`, `urgent` | To build |
 | `phrase_played` | `phrase`, `language`, `secs` | To build |
 | `silence_guard_fired` | `turn`, `waited_secs`, `attempt` | To build |
 | `silence_guard_recovered` | `turn`, `extra_secs` | To build |
@@ -403,7 +438,7 @@ The log is private: it holds transcripts and patient data. Only the console API 
 | `review_link_created` | `expires_at` (never the token) | To build (CO-05) |
 | `call_ended` | `duration_secs` | Built |
 
-`outcome` is written exactly once, by `finish()`, before `call_ended`. Its `flags` come from this list: `emergency`, `provider_quota`, `voice_unresponsive`, `call_cap`, `brain_error`. The console's "quota" filter reads `provider_quota`.
+`outcome` is written exactly once, by `finish()`, before `call_ended`. Its `flags` come from this list: `emergency`, `provider_quota`, `voice_unresponsive`, `call_cap`, `brain_error`, `same_day_urgent` (a same-day urgency booking was saved), `urgent_callback` (an urgent callback message was taken). The console's "quota" filter reads `provider_quota`; its "needs staff today" filter reads `same_day_urgent` and `urgent_callback`.
 
 ---
 
@@ -462,13 +497,15 @@ CREATE TABLE appointments (appointment_id TEXT PRIMARY KEY,
                    treatment_id TEXT NOT NULL REFERENCES treatments,
                    start_utc TEXT NOT NULL, end_utc TEXT NOT NULL CHECK (end_utc > start_utc),
                    status TEXT NOT NULL CHECK (status IN ('booked','cancelled')),
-                   created_by_call TEXT);
+                   same_day_urgent INTEGER NOT NULL DEFAULT 0 CHECK (same_day_urgent IN (0,1)),
+                   created_by_call TEXT);                        -- same_day_urgent: §5.3, set by the store
 CREATE TABLE changes (change_id INTEGER PRIMARY KEY, operation_key TEXT NOT NULL UNIQUE,
                    call_id TEXT NOT NULL, action TEXT NOT NULL
                    CHECK (action IN ('register','book','move','cancel','demo_reset')),
                    details TEXT NOT NULL, saved_utc TEXT NOT NULL);  -- details: JSON before/after
 CREATE TABLE messages (message_id TEXT PRIMARY KEY, call_id TEXT NOT NULL, name TEXT NOT NULL,
-                   phone TEXT NOT NULL, text TEXT NOT NULL, saved_utc TEXT NOT NULL);
+                   phone TEXT NOT NULL, text TEXT NOT NULL,
+                   urgent INTEGER NOT NULL DEFAULT 0 CHECK (urgent IN (0,1)), saved_utc TEXT NOT NULL);
 CREATE TABLE review_links (token_sha256 TEXT PRIMARY KEY, call_id TEXT NOT NULL UNIQUE,
                    expires_utc TEXT NOT NULL);
 ```
@@ -479,12 +516,14 @@ CREATE TABLE review_links (token_sha256 TEXT PRIMARY KEY, call_id TEXT NOT NULL 
 
 ---
 
-## 11. Review link (CO-05)
+## 11. Review link and public calls (CO-05)
 
+- **Before the call.** The page with the talk button (landing and Studio, CO-03) states, next to the button and before the microphone is requested, that the call is recorded and that the caller will talk to an AI, and how long the recording is kept (`REVIEW_LINK_DAYS`). The opening of the call says the same (`greeting`, §6.1). (Decision D10.)
 - When a call ends, the session creates a token with `secrets.token_urlsafe(32)` (256 random bits). The link is `/r/<token>` on the public call server.
 - Only `sha256(token)` is stored (`review_links`), with an expiry of `REVIEW_LINK_DAYS` (default 7) days. The token itself is shown once, to the caller's browser, at hang-up. It never appears in the log.
 - The public route serves that one call's review: transcript, recording and tool steps, **redacted**: tool arguments and results show only the identified patient's own data; other patients returned by `find_patient` show as "another patient". (Decision D10.)
 - An unknown, expired or malformed token returns 404, the same response in each case. No public route lists calls or accepts a `call_id`.
+- **At expiry the data goes, not just the link.** For each expired `review_links` row, a purge (`scripts/purge_expired.py`, run hourly by a timer and once at call-server start-up, OP-02) deletes everything kept for that call: the call log `data/calls/<call_id>.jsonl`, `recordings/<call_id>.wav` and `.timing.json`, the call's `messages` rows, patients registered in that call (`created_by_call`) with their appointments, appointments created by that call (`created_by_call`), the `changes` rows of that call, and finally the `review_links` row. Moves and cancellations of seeded appointments hold no caller data and are undone by the nightly demo reset (OP-01). Each purge appends one line to `data/purge.log` with the `call_id`, the time and the counts deleted, and nothing else. The console loses the call at the same moment. Calls with no review link (bench, eval) are not touched. CO-05 tests that after the purge no file or row with that `call_id` remains.
 
 ---
 
@@ -500,7 +539,6 @@ language: es            # the caller's first language
 now: "2026-11-09T10:15:00+01:00"   # the call clock
 fixture: default        # the seeded database; overrides below apply on top
 overrides: []           # e.g. [{absent: d_ortiz, from: 2026-11-10, to: 2026-11-12}]
-caller_phone: "+34600000123"       # caller ID, or null
 persona: >
   A retired teacher, polite, a bit hard of hearing, asks for things to be repeated.
 facts:                  # what the caller knows and may say
@@ -539,22 +577,22 @@ Text-only evals run the brain and tools with no voice layer: the simulated calle
 
 ---
 
-## 14. Decisions for review
+## 14. Decisions
 
-Each one is a real product or safety choice the plan left open. The default is what this file specifies; changing it is a small edit here plus a note on the affected task.
+All thirteen were decided by the human on 2026-11-08. This file already specifies each final decision; changing one now follows the rule at the top of this file.
 
-| # | Decision | Default here | Alternative | Why it matters |
+| # | Topic | Status | Final decision | Where |
 |---|---|---|---|---|
-| D1 | Same-day slots for urgent pain | Refused for every treatment, urgency included, as PLAN.md says | Allow same-day `urgency` slots with a lead time (e.g. 2 h) | A patient in pain hears "tomorrow at the earliest". Red flags still go to 112, but a clinic would usually see urgent pain the same day. Same-day booking also needs staff to see it in time |
-| D2 | What the red-flag transcript matcher does | Plays `emergency` itself, accepting false alarms | Only force the brain to run triage, and let triage decide | Playing it directly guarantees the 112 instruction even if both models fail; the cost is an occasional unnecessary warning (e.g. a past accident mentioned in passing) |
-| D3 | Booking after an emergency referral | Allowed only if the caller asks; the agent must not imply it replaces emergency care | End the call after the emergency phrase, or refuse bookings for the rest of the call | Ending the call is the safest message but leaves a caller who wants a follow-up with nothing |
-| D4 | Silence guard timeout | 5.0 s | 3.5 s (catches more, but fires on slow cascade turns) or 8 s (fewer false fires, longer silences) | Too short talks over slow answers; too long leaves the caller in silence |
-| D5 | When silence recovery fails twice | End the call with `technical_close` and flag it | Switch the call to the fallback voice layer mid-call, or keep the call open on dead-air prompts | Switching voices mid-call is the best experience but is phase-2 work; keeping a broken call open wastes the caller's time |
-| D6 | Cascade architecture | The cascade's text model is the brain, with the tools directly | The same voice-plus-brain split as speech-to-speech | One hop fewer saves about a second on the slower option; the split would make the two options more alike to compare. Rules are in code either way |
-| D7 | What identifies a patient | One match plus matching date of birth, or one match on caller-ID phone plus matching name | Name and date of birth always, even with caller ID | Caller ID can be spoofed or shared in a family; requiring the date of birth is safer but adds a question to every call |
-| D8 | When a new patient is saved | Staged, and saved by `confirm_pending` in one transaction with the first booking when there is one; the date of birth is required | Save the registration at once; or make the date of birth optional as in PLAN.md | Staging means a caller who changes their mind leaves no record. Without a date of birth the new patient cannot be identified on their next call |
-| D9 | Lists and tools added to PLAN.md | No-action reasons `emergency_referred`, `technical_failure`, `caller_hung_up`; tools `record_triage` and `take_message` | Keep PLAN.md's six reasons and fold these into `out_of_scope`; take messages in the log only | Without them, a dropped call, an emergency or a broken voice all look like "out of scope" in the console, and messages for a callback have nowhere to go |
-| D10 | What the public review link shows | Transcript, recording and redacted tool steps, for 7 days | Transcript and recording only; or a shorter expiry | Tool steps are the most impressive part of the demo; redaction keeps other patients' data out. Even synthetic demo calls carry the visitor's own voice |
-| D11 | Confirmation check | `confirm_pending` needs a caller turn after staging; the judge checks the yes | Also require a yes-like word in that caller turn, matched in code | A word list in code catches the model confirming on a "no", but misfires on "sí, pero..."; the judge is slower but sees meaning |
-| D12 | Default `VOICE` in code | `cascade` until the Gemini paid tier and VO-05; no automatic failover | Default to `gemini` now; or fail over to the cascade automatically when Gemini errors | Gemini on the free tier may let Google use the audio, so it must not be what a real caller reaches by default. Failover is better for callers but adds a path to test |
-| D13 | Red-flag list | PLAN.md's three (trouble breathing, swelling with fever, trauma) plus bleeding that will not stop | PLAN.md's three only | Uncontrolled bleeding after an extraction is a common reason for an urgent call; leaving it out leaves it to the models |
+| D1 | Same-day slots | **Decided: changed** | Same-day slots only for `urgency`, at least `URGENCY_MIN_LEAD_MINUTES` (default 120) after the call clock's `now`; every other treatment still refuses same-day (`same_day`; too close is `too_soon`). Saved same-day urgency bookings are flagged for staff in the console. With no slot today, the agent takes an urgent callback with `take_message` | §5.3, §5.6, §7.6, §8, §10 |
+| D2 | What the red-flag transcript matcher does | **Decided: accepted with a change** | The matcher plays `emergency` itself, accepting false alarms; the phrase is conditional ("if you have trouble breathing... call 112"), in Spanish and English, so a false alarm does not sound absurd | §6.1, §6.2 |
+| D3 | Booking after an emergency referral | **Decided: accepted** | Allowed only if the caller asks; the agent must not imply it replaces emergency care | §6.2 |
+| D4 | Silence guard timeout | **Decided: accepted** | 5.0 s (`RESPONSE_TIMEOUT_SECS`) | §7.1, §7.6 |
+| D5 | When silence recovery fails twice | **Decided: accepted with a change** | End the call with `technical_close` and flag it. The closing phrase gives the clinic's phone number and says to call 112 if it is urgent; the number is filled in from `site.phone` when the clips are generated, checked against a manifest | §6.1, §7.3 |
+| D6 | Cascade architecture | **Decided: accepted with an addition** | The cascade's text model is the brain, with the tools directly. It uses the same brain prompt and the same tools as the brain behind `ask_clinic`, so the text evals apply to both voice options | §4.3 |
+| D7 | What identifies a patient | **Decided: changed** | Always name plus date of birth. The caller-ID path is removed (no `phone` in `find_patient`, no caller ID in the log, prompt or scenarios). Caller ID is a phase 2 topic | §5.2, §5.3, §8, §12 |
+| D8 | When a new patient is saved | **Decided: accepted** | Staged, and saved by `confirm_pending` in one transaction with the first booking when there is one; the date of birth is required | §5.3 |
+| D9 | Lists and tools added to PLAN.md | **Decided: accepted** | No-action reasons `emergency_referred`, `technical_failure`, `caller_hung_up`; tools `record_triage` and `take_message` | §5.3, §5.7 |
+| D10 | Public review link and public calls | **Decided: accepted with additions** | The link shows transcript, recording and redacted tool steps for 7 days. At expiry the recording and all call data behind the link are deleted, not just the link. Before the call, the page and the opening clip say the call is recorded and the caller is talking to an AI. Launch requirement: the public demo never runs on a provider tier whose terms let the provider use call data | §3.1, §3.2, §6.1, §11 |
+| D11 | Confirmation check | **Decided: changed** | `confirm_pending` still needs a caller turn after staging, and is also refused with `caller_said_no` when the latest final caller turn contains a clear negative from a bilingual whole-word list. A false refusal only makes the agent ask again. EN-04 ships unit tests for the list | §5.3, §5.9 |
+| D12 | Default `VOICE` in code | **Decided: accepted** | `cascade` until the Gemini paid tier and VO-05; no automatic failover | §3.1 |
+| D13 | Red-flag list | **Decided: accepted with an addition** | PLAN.md's three (trouble breathing, swelling with fever, trauma) plus bleeding that will not stop. A licensed dentist must validate the list before any real clinic uses it | §6.2 |

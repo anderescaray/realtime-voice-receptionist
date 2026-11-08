@@ -13,15 +13,15 @@
 |---|---|---|
 | 1 | **The voice model and the brain are separate.** A speech model handles the conversation and hands clinic questions to a reasoning model that calls the tools. | Natural speech and correct actions need different models. |
 | 2 | **One voice-layer contract:** `run_call(transport, session)`, with swappable implementations chosen by `VOICE=` (`gemini`, `cascade`, `openai`, `none`), including a silent stub for tests. No business rule depends on which one is active. Audio and turn timing run on a steady clock, so a wall clock that steps cannot drop audio. | Lets you try providers and compare their cost and latency without rewriting anything. |
-| 3 | **Tools refuse what the call did not look up.** No booking an unknown patient, a slot that was never offered, a same-day slot, or a reason outside a fixed list. | Guardrails live in code, not in the prompt. This is the biggest reason it "really works". |
+| 3 | **Tools refuse what the call did not look up.** No booking an unknown patient, a slot that was never offered, a same-day slot (except urgent pain, at least 2 hours ahead), a confirmation right after the caller said no, or a reason outside a fixed list. | Guardrails live in code, not in the prompt. This is the biggest reason it "really works". |
 | 4 | **Changes are staged, then saved once confirmed.** A staged change can be discarded before it is saved. Each write carries a unique operation key, and the database refuses overlapping appointments. A call that changes nothing records why, from a fixed list of reasons. | A caller changing their mind never leaves a wrong record, a retry never books twice, and an empty call is explained. |
 | 5 | **The clinic engine generates the slots:** a 15-minute grid within each dentist's hours, minus bookings, closures and absences. Each rule that blocks a slot is reported with its reason. **Every call runs on its own clock:** a "now" fixed when the call starts and injectable in tests. The engine and the session read only that clock, never the wall clock. | The agent can explain *why* a slot is not available instead of inventing one. Tests and evals give the same answer on every run. |
-| 6 | **The prompt is rebuilt for every call:** receptionist rules, a calendar of the coming days with real dates, the clinic's catalogue, and what caller ID found. | Without real dates in the prompt, models get "next Tuesday" wrong. |
+| 6 | **The prompt is rebuilt for every call:** receptionist rules, a calendar of the coming days with real dates, and the clinic's catalogue. | Without real dates in the prompt, models get "next Tuesday" wrong. |
 | 7 | **Every call writes a JSONL log:** transcript, tool inputs and results, staged and saved actions, outcome, and a reason when nothing was done. | You can debug any call, and it feeds the console and the evals. |
 | 8 | **Stereo recording off the wire,** in `recordings/` (caller left, agent right, on one timeline shared with the call log), plus audio timing metrics: time to greeting, response latency, dead air, interruptions and how fast the agent stops talking, stutters. Every latency figure is reported with its overlap rate, because the median leaves out turns where caller and agent overlap. | Real latency and quality numbers for the README, and numbers that don't flatter. |
-| 9 | **A private staff console:** an overview, a list of calls, a review page where clicking a message jumps the recording to it and clicking a tool shows its inputs and result, and a calendar. Its API runs as a separate process that is not reachable from the internet. A visitor to the public demo sees only the review of their own call, through an unguessable link created when they hang up. | It's what a clinic would actually buy, and it's the best screenshot for recruiters. Transcripts and recordings are never public by default. |
+| 9 | **A private staff console:** an overview, a list of calls, a review page where clicking a message jumps the recording to it and clicking a tool shows its inputs and result, and a calendar. Its API runs as a separate process that is not reachable from the internet. A visitor to the public demo is told before the call, on the page and in the opening, that the call is recorded and that they are talking to an AI. They see only the review of their own call, through an unguessable link created when they hang up; when the link expires, the recording and the call's data are deleted with it. | It's what a clinic would actually buy, and it's the best screenshot for recruiters. Transcripts and recordings are never public by default. |
 | 10 | **A role-play Studio:** cards with a caller role and goal, so visitors know what to try in the browser demo. | Turns "talk to my bot" into a guided demo. |
-| 11 | **Call hygiene:** a 5-minute cap, ending the call when it's over, and a per-visitor rate limit. Dead air gets prerecorded prompts, and silence is judged from the transcripts, not from loudness, so line noise doesn't count as speech. A silence guard in code plays a fixed recovery phrase when the caller has finished and the agent doesn't answer in time, so no instruction ("be quiet") can leave a call mute; if recovery fails, the call ends politely and is flagged. If a provider rejects a request for quota or credit, the caller hears a prerecorded polite message, the call ends, and the console flags it. | Protects your budget and the experience. A demo that runs out of credit fails politely instead of going silent. |
+| 11 | **Call hygiene:** a 5-minute cap, ending the call when it's over, and a per-visitor rate limit. Dead air gets prerecorded prompts, and silence is judged from the transcripts, not from loudness, so line noise doesn't count as speech. A silence guard in code plays a fixed recovery phrase when the caller has finished and the agent doesn't answer in time, so no instruction ("be quiet") can leave a call mute; if recovery fails, the call ends politely and is flagged. If a provider rejects a request for quota or credit, the caller hears a prerecorded polite message with the clinic's phone number and the 112 reminder, the call ends, and the console flags it. | Protects your budget and the experience. A demo that runs out of credit fails politely instead of going silent. |
 | 12 | **A cost script:** dollars per call, from logged usage. | Hiring managers love cost numbers, and dentists will ask. |
 | 13 | **Honest docs:** a "Scaling up" section and the limits of the demo. | Reads as senior engineering. |
 
@@ -38,9 +38,9 @@
 
 **Calls it handles:**
 1. A new patient registers by name and books a first check-up.
-2. A known patient (found from caller ID or name and date of birth) books the earliest slot for a treatment, or a slot with a given dentist or at a given time.
+2. A known patient (always identified by name and date of birth) books the earliest slot for a treatment, or a slot with a given dentist or at a given time.
 3. Moving or cancelling an existing appointment.
-4. **Urgent pain:** triage questions, then the earliest urgency slot. The agent never gives medical advice. Red flags (swelling with fever, trouble breathing, trauma) → the caller is told to go to the emergency department or call 112, and an escalation is logged. The 112 instruction is a fixed phrase played by code, triggered by the brain's triage or by a red-flag check on the caller's transcript, never left to the voice model: in the voice test the speech-to-speech model answered a toothache without mentioning 112.
+4. **Urgent pain:** triage questions, then the earliest urgency slot, the same day if it starts at least 2 hours ahead (configurable); same-day urgent bookings are flagged for staff in the console. With no slot, the agent takes a message for an urgent callback. The agent never gives medical advice. Red flags (swelling with fever, trouble breathing, trauma, bleeding that will not stop) → the caller is told to go to the emergency department or call 112, and an escalation is logged. The 112 instruction is a fixed, conditional phrase played by code ("if you have trouble breathing..., call 112"), triggered by the brain's triage or by a red-flag check on the caller's transcript, never left to the voice model: in the voice test the speech-to-speech model answered a toothache without mentioning 112. The red-flag list is a demo default; a licensed dentist must validate it before any real clinic uses it.
 5. Questions about prices, hours, how to get there and insurance, answered only from the clinic's catalogue.
 6. Anything else → it takes a message for a callback.
 
@@ -91,14 +91,16 @@ recordings/              # stereo WAV per call (git-ignored)
 ```
 
 **Tools**
-- `find_patient(name?, dob?, phone?)`: returns at most 3 matches. If the details fit several people, the agent asks a follow-up question.
-- `register_patient(first, last1, last2?, phone)`
+- `find_patient(name, dob)`: returns at most 3 matches. A patient is identified only when exactly one match has that date of birth. If the details fit several people, the agent asks a follow-up question.
+- `register_patient(first, last1, last2?, dob, phone)`: staged, and saved with the first booking
 - `list_appointments(patient_id)`
 - `search_availability(treatment, dentist?, after?, before?, part_of_day?)`: returns slot IDs, plus which rules blocked which dentists.
 - `book(slot_id, patient_id, treatment)`, `move(appointment_id, slot_id)`, `cancel(appointment_id)`: stage the change, and refuse any slot ID this call was not offered.
-- `confirm_pending()`: saves the staged change once the caller has said yes, using its operation key.
+- `confirm_pending()`: saves the staged change once the caller has said yes, using its operation key. Refused if the caller's latest turn contains a clear no ("no", "espera", "wait", "cancel"...).
 - `discard_pending()`: drops the staged change before it is saved, when the caller changes their mind or says no.
-- `record_no_action(reason)`: for a call that ends without a change. The reason comes from a fixed list: `info_only`, `message_taken`, `no_suitable_slot`, `caller_declined`, `not_identified`, `out_of_scope`.
+- `record_no_action(reason)`: for a call that ends without a change. The reason comes from a fixed list: `info_only`, `message_taken`, `no_suitable_slot`, `caller_declined`, `not_identified`, `out_of_scope`, `emergency_referred`, `technical_failure`, `caller_hung_up`.
+- `record_triage(...)`: stores the urgent-pain triage answers; a red flag makes code play the emergency phrase.
+- `take_message(name, phone, text, urgent?)`: saves a callback message for staff.
 - `clinic_info(topic)`: answers only from the catalogue.
 - `escalate(reason, urgency)`: the reason comes from a fixed list.
 
@@ -124,6 +126,7 @@ The README shows three tables: task success per scenario type, latency and audio
 | Brain | Claude Haiku 5.5 | Calls the tools. Only short context is needed. In the cascade, the text model is the brain |
 | Database | SQLite (WAL) | Fine on one host. The "Scaling up" doc explains the move to Postgres |
 | Hosting | One small VPS (about €5/month) with Caddy for HTTPS | Voice sessions need a long-running process. Free hosting tiers fit poorly |
+| Provider tiers | Paid or no-training terms for every provider a public call reaches | Launch requirement: the public demo never runs on a free tier whose data the provider may use |
 | Frontend | React + Vite, served by the same host | |
 | Bot protection | Cloudflare Turnstile + per-IP limits + 5-minute cap | |
 
@@ -158,6 +161,8 @@ If time runs short, cut in this order: calendar view, then the audio eval run, t
 - **Integration with the clinic's real diary:** a Google Calendar adapter first, then their practice software if it has an API, behind the same engine interface.
 - **Confirmations and reminders** by SMS, WhatsApp or email. Reminders reduce no-shows, which is what clinics pay for.
 - **Transferring the call** to a human at reception.
+- **Caller ID:** use the calling number as a hint to find the patient faster. The MVP always identifies by name and date of birth, because caller ID can be spoofed or shared within a family.
+- **Clinical sign-off:** a licensed dentist validates the red-flag list and the triage questions before any real clinic uses the agent.
 - **Surviving a dropped voice connection:** if the speech model's connection drops mid-call, open a new session seeded with the conversation so far, and carry on without the caller noticing.
-- **GDPR:** health data is a special category of personal data. You need a data processing agreement with each clinic, EU hosting, an announcement at the start of the call that it is recorded and that the caller is speaking to an AI, a retention policy, and processor agreements with your AI providers. Get advice before taking real patient calls.
+- **GDPR:** health data is a special category of personal data. You need a data processing agreement with each clinic, EU hosting, the announcement that the call is recorded and that the caller is speaking to an AI (the demo already plays it), a retention policy (the demo deletes each call after 7 days), and processor agreements with your AI providers. Get advice before taking real patient calls.
 - **Pricing test:** offer one clinic a free month for after-hours calls only, and measure calls answered, bookings made and no-shows.
