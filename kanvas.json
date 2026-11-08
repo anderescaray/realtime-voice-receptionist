@@ -91,12 +91,54 @@
     {
       "id": "FD-02",
       "title": "Write contracts.md",
-      "state": "todo",
+      "state": "done",
       "group": "FD",
       "deps": ["FD-01"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "The shared formats every lane builds against: database tables, tool schemas and their refusal rules, the voice-layer contract run_call(transport, session), the JSONL event types (including the provider quota flag), the eval scenario format, the fixed lists of no-action and escalation reasons, and the review-link token. It also defines the injectable clock: each call gets its own now when it starts, and the engine, session, prompt and tools read only that, never the wall clock. Changes after approval need a note on the board."
+      "desc": "The shared formats every lane builds against: database tables, tool schemas and their refusal rules, the voice-layer contract run_call(transport, session), the JSONL event types (including the provider quota flag), the eval scenario format, the fixed lists of no-action and escalation reasons, and the review-link token. It also defines the injectable clock: each call gets its own now when it starts, and the engine, session, prompt and tools read only that, never the wall clock. Changes after approval need a note on the board.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:10:18Z",
+          "by": "foundation",
+          "text": "Plan: write contracts.md at the repo root from PLAN.md and what FD-01 actually built (app/voice/): clocks, voice-layer contract and brain hand-off, fixed phrases played by code (emergency, silence recovery, quota), silence guard, tools and refusal rules, database tables, JSONL events, recording format, metrics (latency always with overlap rate), eval scenario format, closed reason lists and the review-link token. Update PLAN.md where FD-01 changed it. Open product and safety choices get a default and go in a final 'Decisions for review' section. Then one independent read-only review, apply what I agree with."
+        },
+        {
+          "at": "2026-11-08T12:17:36Z",
+          "by": "cursor-reviewer",
+          "text": "Review of contracts.md and the PLAN.md edits (git diff main...HEAD), read-only.\nVerdict: REQUEST CHANGES. The document is strong on the voice-test results and on structure, but several tool and session rules contradicted each other or the code and would mislead implementers.\n18 findings: 5 high (registering and booking a new patient broke the one-pending-change rule; tools could act for a patient other than the identified one; the fallback reason order mislabelled message calls; the silence guard could fire over busy work; the FD-01 latency figures had no overlap rate), 10 medium, 3 low."
+        },
+        {
+          "at": "2026-11-08T12:17:36Z",
+          "by": "foundation",
+          "text": "contracts.md is at the repo root: the formats and rules every lane builds against. PLAN.md is updated where the voice test changed it.\n\nWhat it fixes in code, not in prompts:\n- No business rule depends on the active voice (VOICE= gemini, cascade, openai, none). Gemini is primary and cascade the fallback, both provisional until VO-05 measures GPT-Live-1. The code default stays cascade (D12).\n- 112 / emergency care: a fixed prerecorded phrase, triggered by the brain's triage, an emergency escalation or a red-flag check on the caller's transcript. Urgent pain needs triage before an urgency slot can be searched.\n- Silence guard: if the agent hasn't started answering 5 s after the caller's turn, the system plays \"Perdone, un segundo\" and asks the model to answer. A second failure in a row, or 4 in one call, ends the call politely and flags it. No instruction can turn the guard off. \"Be quiet\" followed by silence leads to \"¿Sigue ahí?\" prompts and a polite hang-up, never a mute call.\n- Metrics: every latency figure comes with its overlap rate and its turn count.\n- Also covered: clocks, tools and refusal codes, tables (overlaps refused by a DB trigger), JSONL events, the stereo recording on the call log's timeline, the review-link token, the eval scenario format.\n\nReview: one independent Cursor review in read-only mode (verdict note above). I applied 17 of its 18 findings. The 18th, partly applied, asked to switch the code default to gemini; I kept cascade because of Gemini's free-tier data terms and logged it as D12.\n\nPlease decide: section 14, \"Decisions for review\", D1 to D13. The ones that matter most:\n- D1: no same-day slots, even for urgent pain.\n- D2: the red-flag matcher plays 112 itself and accepts false alarms.\n- D5: end the call after two failed recoveries.\n- D7: what identifies a patient.\n- D9: added reasons and tools (record_triage, take_message).\n\nBranch feat/fd-02-contracts, not pushed."
+        },
+        {
+          "at": "2026-11-08T12:17:43Z",
+          "by": "foundation",
+          "text": "Correction to the summary: the partly applied finding is #6 (code default VOICE), not the 18th. All the others were applied."
+        },
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Applied your decisions D1–D13 to contracts.md and PLAN.md. Section 14 now lists each one as decided with its final rule and where it lives.\n- Changed: D1 (same-day only for urgency, ≥120 min from the call clock, flagged for staff, urgent callback if no slot), D7 (name + date of birth only; caller ID moved to phase 2), D11 (confirm_pending refused with caller_said_no on a clear negative; word list in §5.9).\n- With changes: D2 (conditional emergency phrase), D5 (technical_close gives the clinic number and the 112 reminder; number rendered into the clip from site.phone at `make clips`, checked against a manifest), D10 (data deleted at expiry, recording/AI disclosure on the page and in a greeting clip, no free tier for public calls), D6, D13.\n- Two choices I made that you should check: the opening greeting is now a fixed clip played by code (so the disclosure never depends on a model), and the call starts in the page's language so an English visitor hears the disclosure in English."
+        },
+        {
+          "at": "2026-11-08T13:00:58Z",
+          "by": "cursor-reviewer",
+          "text": "Review of the decisions commit (git diff main...HEAD against PLAN.md and FD-02), read-only, 3 rounds in one session.\nFinal verdict: APPROVE.\n- Round 1: 10 findings (5 blocking, 5 minor), all fixed. Blocking: the wall-clock rule forbade the one allowed read in CallSession.start(); D1's summary mixed up same_day and too_soon; PLAN.md's confirm_pending still implied a yes check; it was unclear which calls get a review link (and so which are purged); registration plus booking had no defined operation keys or change rows.\n- Round 2: those 5 resolved; the fixes raised 2 blocking points (the saved event had room for only one change id; a log line was said to be \"replaced\" in an append-only log) and 1 minor naming mismatch, all fixed.\n- Round 3: all resolved, nothing new."
+        },
+        {
+          "at": "2026-11-08T15:15:51Z",
+          "by": "cursor-reviewer",
+          "text": "Review of the D14-D24 commits only (git diff of the new commits), read-only, 2 rounds in one session.\nFinal verdict: APPROVE.\n- Round 1: 7 findings (4 blocking, 3 minor), all fixed. Blocking: one listed name pair (Marcello / Marcelo) did not match under the folding rules; an echo transcript after staging skipped the confirmation wait; the greeting still read the old single manifest path; dead-air prompts still reset on echo.\n- Round 2: all 7 resolved. 2 new minor points (the dead-air and guard lead-in sentences did not yet exclude echo), both fixed after the round."
+        },
+        {
+          "at": "2026-11-08T15:15:52Z",
+          "by": "foundation",
+          "text": "Applied your 11 changes as D14-D24 in contracts.md section 14, with PLAN.md updated where it conflicted. FD-02 stays in review.\nThings to check:\n- D16: too_many_matches is removed (find_patient now returns only a count when no one is identified). The new refusal is too_many_dob_attempts.\n- D16: name matching folds Spanish spellings (b/v, ll/y, silent h, z/s, ge/je...) but has no edit-distance tolerance, so a speech-to-text typo beyond those rules will not match.\n- D22: technical_close (clinic number and 112 reminder) can be cut off by the caller, as you asked; the call still ends.\n- D18: no clips generated yet. The Gemini set needs a paid generator run, which waits for your approval."
+        }
+      ]
     },
     {
       "id": "EN-01",
@@ -106,7 +148,14 @@
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "A fictional dental clinic: 1 site, 4 dentists, 1 hygienist, hours, holidays, absences, treatments with durations and who does them, prices, about 300 synthetic patients and a realistic 4-week diary. make seed rebuilds the same database every time."
+      "desc": "A fictional dental clinic: 1 site, 4 dentists, 1 hygienist, hours, holidays, absences, treatments with durations and who does them, prices, about 300 synthetic patients and a realistic 4-week diary. make seed rebuilds the same database every time.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D5): the seeded site.phone is spoken in the technical_close clip, so it must be a number that cannot reach a real person or business."
+        }
+      ]
     },
     {
       "id": "EN-02",
@@ -116,7 +165,14 @@
       "deps": ["EN-01"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "Free slots on a 15-minute grid inside each practitioner's hours, minus bookings, closures and absences, fitting the treatment's duration. Every rule that blocks a practitioner is reported with its reason. Reads the call's clock, never the wall clock. Unit tests for each rule, run on a fixed clock."
+      "desc": "Free slots on a 15-minute grid inside each practitioner's hours, minus bookings, closures and absences, fitting the treatment's duration. Every rule that blocks a practitioner is reported with its reason. Reads the call's clock, never the wall clock. Unit tests for each rule, run on a fixed clock.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D1): urgency searches include today's slots ≥ URGENCY_MIN_LEAD_MINUTES (default 120) after the call clock's now; new blocking reason within_lead_time (§5.6)."
+        }
+      ]
     },
     {
       "id": "EN-03",
@@ -126,7 +182,14 @@
       "deps": ["EN-01"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "SQLite in WAL mode. Writes carry a unique operation key so retries never double-book; a database constraint or transaction refuses overlapping appointments. Tests cover concurrent bookings of the same slot."
+      "desc": "SQLite in WAL mode. Writes carry a unique operation key so retries never double-book; a database constraint or transaction refuses overlapping appointments. Tests cover concurrent bookings of the same slot.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D1/D10): appointments.same_day_urgent and messages.urgent columns (§10); purge of an expired public call deletes its rows (§11)."
+        }
+      ]
     },
     {
       "id": "EN-04",
@@ -136,7 +199,19 @@
       "deps": ["EN-02", "EN-03"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "The tools in contracts.md and a per-call session, with its own clock, that stages changes and saves them only after confirm_pending. discard_pending drops a staged change before it is saved, and record_no_action(reason) explains a call that changes nothing, with a reason from the fixed list. Tools refuse unknown patients, slots this call was not offered, same-day slots and reasons outside the fixed list, with a message the model can explain to the caller."
+      "desc": "The tools in contracts.md and a per-call session, with its own clock, that stages changes and saves them only after confirm_pending. discard_pending drops a staged change before it is saved, and record_no_action(reason) explains a call that changes nothing, with a reason from the fixed list. Tools refuse unknown patients, slots this call was not offered, same-day slots and reasons outside the fixed list, with a message the model can explain to the caller.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D1/D7/D11): find_patient now takes name and dob (both required, no phone); same-day urgency slots allowed ≥ URGENCY_MIN_LEAD_MINUTES (new refusal too_soon); confirm_pending refuses with caller_said_no on a clear negative. This task must ship unit tests for the negatives list in app/negatives.py (contracts.md §5.9 lists the required cases)."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D14 (§5.2, §7.7): echo transcripts never count as a reply or a 'no' and don't update last_caller_text. D15 (§5.11): confirm_pending waits up to 1.0 s for a newer caller transcript. D16 (§5.3, §5.4, §5.10): find_patient returns data only for the one date-of-birth match, max 3 failed attempts, name folding in app/names.py with the listed test pairs. D17 (§5.12): read-back check in app/readback.py, logs only, with parser tests. D19 (§5.9): second 'no' discards the change, with tests."
+        }
+      ]
     },
     {
       "id": "VO-01",
@@ -146,7 +221,19 @@
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "Built at the start of each call: receptionist rules, urgent-pain triage and red flags (send to emergency or 112, never diagnose), a dated calendar for the coming two weeks, the catalogue, and what caller ID found. Answers in the caller's language and follows a switch."
+      "desc": "Built at the start of each call: receptionist rules, urgent-pain triage and red flags (send to emergency or 112, never diagnose), a dated calendar for the coming two weeks, the catalogue, and what caller ID found. Answers in the caller's language and follows a switch.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D7/D6/D13): the prompt no longer includes caller-ID facts (caller ID is phase 2). The cascade uses this same brain prompt plus a spoken-reply block. The red-flag list must be validated by a licensed dentist before any real clinic uses it."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D13 and D20 (§6.2): red-flag lists in app/redflags.py, tuned on tests/redflags/tuning.yaml and measured on a holdout set never used for tuning; report recall and false-alarm rate; a licensed dentist must validate the list before real use. D14 (§7.7): the matcher also reads transcripts marked as echo."
+        }
+      ]
     },
     {
       "id": "VO-02",
@@ -156,7 +243,19 @@
       "deps": ["VO-01", "EN-04"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "The speech model handles the conversation and hands clinic questions to the brain model, which calls the tools. Implement VOICE=s2s, VOICE=cascade and VOICE=none behind the same contract. Done when a full booking works in the browser with each real option."
+      "desc": "The speech model handles the conversation and hands clinic questions to the brain model, which calls the tools. Implement VOICE=s2s, VOICE=cascade and VOICE=none behind the same contract. Done when a full booking works in the browser with each real option.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:55:06Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D6): the cascade must use the same brain prompt and tools_for_session/call_tool as the ask_clinic brain, with no fork (§4.3)."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D14 (§7.7, §8): echo check in app/voice/echo.py, logged as echo: true, with the unit tests listed in §7.7. D15 (§5.11): log transcript_missing, and measure when caller transcripts arrive relative to each ask_clinic call on every speech-to-speech layer. D18 (§6.1, §8): log the active voice_set in voice_config. D22 (§3.4): play() barge-in rules."
+        }
+      ]
     },
     {
       "id": "VO-03",
@@ -166,7 +265,19 @@
       "deps": ["VO-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "Greeting within a second, stops talking quickly when interrupted, hangs up after a goodbye, 5-minute cap with a polite close. Dead air: prerecorded prompts in Spanish and English, with silence judged from the transcripts, not from loudness, and held back while a tool or the brain is working. Quota and credit errors from any provider: the caller hears a prerecorded polite message, the call ends, and the log records a provider quota flag for the console."
+      "desc": "Greeting within a second, stops talking quickly when interrupted, hangs up after a goodbye, 5-minute cap with a polite close. Dead air: prerecorded prompts in Spanish and English, with silence judged from the transcripts, not from loudness, and held back while a tool or the brain is working. Quota and credit errors from any provider: the caller hears a prerecorded polite message, the call ends, and the log records a provider quota flag for the console.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D2/D5/D10): new greeting clip with the recording + AI disclosure, played by code at connect; emergency phrase is now conditional; technical_close includes {clinic_phone} and the 112 reminder. Clips render placeholders from the site row and are checked against clips/manifest.json (§6.1)."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D22 changed on 2026-11-08: greeting, emergency and technical_close always play to the end; other clips stop on caller speech (§3.4). D18 (§6.1): one clip set per voice, make clips with a pluggable generator, manifest, start-up check, test against the seed; paid generators only with approval. D21 (§6.2): emergency at most twice per call. D14/D15 (§7.1, §7.4, §7.5, §7.7, §5.11): echo arms nothing; transcript_missing arms only the silence guard. Settings in §7.6."
+        }
+      ]
     },
     {
       "id": "VO-04",
@@ -186,7 +297,14 @@
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "Read-only FastAPI over the call logs, recordings and the diary: list calls, one call's events, audio file, appointments by day, overview counts, and calls flagged for provider quota. It runs as its own process, bound to localhost and never exposed to the internet. Staff reach it over an SSH tunnel."
+      "desc": "Read-only FastAPI over the call logs, recordings and the diary: list calls, one call's events, audio file, appointments by day, overview counts, and calls flagged for provider quota. It runs as its own process, bound to localhost and never exposed to the internet. Staff reach it over an SSH tunnel.",
+      "notes": [
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): serve the new events and flags from §8: echo on transcripts (D14), transcript_missing (D15), readback_mismatch (D17), voice_unresponsive (D5), and the audio_metrics fields in §9.3. Any latency figure the API returns comes with its overlap rate and count (D24, §13)."
+        }
+      ]
     },
     {
       "id": "CO-02",
@@ -196,7 +314,19 @@
       "deps": ["CO-01", "VO-04"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "React pages: overview (calls, bookings, average response gap), call list, and a review page where clicking a message seeks the recording and clicking a tool shows its inputs and result. Calls that ended on a provider quota error are flagged in the list and the overview. Attach screenshots when finishing."
+      "desc": "React pages: overview (calls, bookings, average response gap), call list, and a review page where clicking a message seeks the recording and clicking a tool shows its inputs and result. Calls that ended on a provider quota error are flagged in the list and the overview. Attach screenshots when finishing.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D1): flag same-day urgent bookings and urgent callbacks for staff (outcome flags same_day_urgent, urgent_callback; 'needs staff today' filter)."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): mark echo transcripts on the review page (D14, §7.7); show readback_mismatch on the call list and review page (D17, §5.12, §8); list voice_unresponsive calls (D5, §7.3). The overview's response gap follows §13: shown with overlap rate and count, never a median alone (D24)."
+        }
+      ]
     },
     {
       "id": "CO-03",
@@ -206,7 +336,14 @@
       "deps": ["CO-01"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "Landing page with the pitch and a talk button, and a Studio with 6 role cards (new patient, earliest check-up, move an appointment, cancel, toothache, price question) in Spanish and English, each opening a browser call."
+      "desc": "Landing page with the pitch and a talk button, and a Studio with 6 role cards (new patient, earliest check-up, move an appointment, cancel, toothache, price question) in Spanish and English, each opening a browser call.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D10): the page states, before the mic is requested, that the call is recorded, that the caller talks to an AI, and how long it is kept; it passes its language to the call."
+        }
+      ]
     },
     {
       "id": "CO-04",
@@ -226,7 +363,14 @@
       "deps": ["CO-02", "CO-03"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "When a call ends, the session creates an unguessable token (at least 128 random bits) for it. The public call server serves that one call's review (transcript, recording, tool steps) at a link built from the token, and nothing else. No overview, no call list, no other call. The Studio shows the link after hang-up. Tests: an unknown or other call's token returns 404, and no public route lists calls."
+      "desc": "When a call ends, the session creates an unguessable token (at least 128 random bits) for it. The public call server serves that one call's review (transcript, recording, tool steps) at a link built from the token, and nothing else. No overview, no call list, no other call. The Studio shows the link after hang-up. Tests: an unknown or other call's token returns 404, and no public route lists calls.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D10): at expiry the purge deletes the call's log, recording, timing file and DB rows, not just the link (§11). Test that nothing with that call_id remains."
+        }
+      ]
     },
     {
       "id": "EV-01",
@@ -236,7 +380,14 @@
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "Scenarios in the contract format, Spanish and English, with persona, goal and expected outcome. Include: changes mind, wrong date of birth, two patients with the same name, full day, red-flag urgency, asks for medical advice, tries to make the agent ignore its rules, switches language mid-call."
+      "desc": "Scenarios in the contract format, Spanish and English, with persona, goal and expected outcome. Include: changes mind, wrong date of birth, two patients with the same name, full day, red-flag urgency, asks for medical advice, tries to make the agent ignore its rules, switches language mid-call.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:52Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D7): scenarios no longer have caller_phone; identification is always name + dob. Worth adding a same-day urgency scenario (D1) and a 'no' at confirmation scenario (D11)."
+        }
+      ]
     },
     {
       "id": "EV-02",
@@ -276,7 +427,14 @@
       "deps": ["VO-02", "CO-03", "OP-01", "CO-05"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "One small VPS with Caddy for HTTPS, the call server and the console API as separate services, and a deploy workflow from GitHub. Caddy exposes only the call server and the static site. The console API stays on localhost. Done when a stranger can call the agent from a phone browser and open the review of their own call from the link, and a check confirms the console API is not reachable from outside."
+      "desc": "One small VPS with Caddy for HTTPS, the call server and the console API as separate services, and a deploy workflow from GitHub. Caddy exposes only the call server and the static site. The console API stays on localhost. Done when a stranger can call the agent from a phone browser and open the review of their own call from the link, and a check confirms the console API is not reachable from outside.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:54:51Z",
+          "by": "foundation",
+          "text": "Contract change (FD-02, D10): launch requirement: no provider a public call reaches may be on a free tier whose terms let it use call data; record plan and terms per provider. Also runs the hourly purge timer (§11)."
+        }
+      ]
     },
     {
       "id": "OP-03",
@@ -296,7 +454,14 @@
       "deps": ["EV-03", "VO-04", "OP-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "10 scenarios through the real voice pipeline with TTS-generated caller lines. Report p50/p95 latency, dead air and yield time from the recorder's metrics."
+      "desc": "10 scenarios through the real voice pipeline with TTS-generated caller lines. Report p50/p95 latency, dead air and yield time from the recorder's metrics.",
+      "notes": [
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D17 (§12, §13): check each scenario's read-back against the staged change (readback_mismatch) and flag invented dates, times, prices or names; these are reported only from this run. §13 and D24: every latency figure with overlap rate, count and unanswered turns, and say whether it is heard or server latency. Metrics come from audio_metrics (§9.3)."
+        }
+      ]
     },
     {
       "id": "LN-01",
