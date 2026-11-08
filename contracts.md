@@ -70,7 +70,7 @@ A layer must:
 1. Let the plumbing play the `greeting` clip (§6) as soon as the transport connects, and not generate a greeting of its own. The clip tells the caller that the call is recorded and that they are talking to an AI, so that statement never depends on a model. Built today: the model speaks `session.greeting`, without the disclosure. To build (VO-03): the clip.
 2. Use `session.instructions()` as its system prompt (the per-call prompt, VO-01).
 3. Hand every clinic question to the brain (§4). The speech-to-speech layers get exactly one tool, `ask_clinic`; the cascade gets the clinic tools directly (§4.3).
-4. Log both sides' speech as `transcript` events with `role` `"caller"` or `"agent"` (§8). Caller transcripts are required: red-flag detection, the silence guard and dead-air prompts all read them.
+4. Log both sides' speech as `transcript` events with `role` `"caller"` or `"agent"` (§8). Caller transcripts are required: red-flag detection, the silence guard and dead-air prompts all read them. Caller transcripts go through the plumbing, which adds the caller speech segment they belong to and the echo check (§7.7) before logging; a layer never sets `echo` itself.
 5. Log what the call consumed as `usage` events.
 6. Run through the shared plumbing in `app/voice/common.py` (`run_pipeline`). Built: transcripts, latency, usage and the bare call cap. To build (VO-02, VO-03, VO-04): the silence guard, dead-air prompts, fixed-phrase playback, provider-error handling and the recorder taps. A layer must not re-implement any of them.
 7. Report provider errors through the shared plumbing, with a category (§8, `provider_error`).
@@ -96,7 +96,7 @@ class CallControl:
     def busy(self, reason: str) -> ContextManager   # brain or tool working: holds the silence guard (§7)
 ```
 
-- `play` is the only way fixed phrases reach the caller. While a clip plays, audio from the voice model is held, then released when the clip ends, so the two never overlap. After the clip, the voice model's context gets a short system note saying what was said (for example "The caller was told to call 112"), so it does not contradict or repeat it.
+- `play` is the only way fixed phrases reach the caller. While a clip plays, audio from the voice model is held, then released when the clip ends, so the two never overlap. **Barge-in:** `greeting` and `emergency` always play to the end; caller speech during them is still transcribed and handled once the clip ends. Every other clip stops when caller speech starts, like model audio, and its `phrase_played` event carries `interrupted: true`; an interrupted closing clip (`technical_close`, `cap_close`, `idle_close`) still ends the call. (Decision D22.) After the clip, the voice model's context gets a short system note saying what was said (for example "The caller was told to call 112"), so it does not contradict or repeat it.
 - `nudge` triggers a new response from the model on the conversation so far: `LLMRunFrame` for the cascade, a response request for the speech-to-speech layers. A layer that cannot nudge must say so with `supports_nudge = False`; the silence guard then plays `recover` without a nudge, and each such firing counts as a failed recovery at once (§7.3).
 
 ---
@@ -167,15 +167,16 @@ In the cascade the text model already reads the caller's words, so it **is** the
 
 The session keeps, for the current call only:
 
-- `patients_seen`: every patient returned by `find_patient`, and patients registered in this call.
-- `last_caller_text`: the latest final caller transcript (§7.1) and when it was logged, read by `confirm_pending`. `session.log()` updates it whenever it writes a `transcript` event with `role: "caller"`, so every voice layer and the text evals keep it current without extra code.
+- `patients_seen`: the patient `find_patient` identified (the only one whose data it returns, §5.3), and patients registered in this call.
+- `dob_failures`: how many `find_patient` calls in this call matched a name but no date of birth (§5.3).
+- `last_caller_text`: the latest final caller transcript (§7.1) and when it was logged, read by `confirm_pending`. `session.log()` updates it whenever it writes a `transcript` event with `role: "caller"` and without `echo: true` (§7.7), so every voice layer and the text evals keep it current without extra code.
 - `identified`: at most one patient, the one the call acts for (rule below).
 - `slots_offered`: every slot returned by `search_availability`, with its practitioner, start, end and treatment.
 - `appointments_seen`: every appointment returned by `list_appointments`.
 - `triage`: the last `record_triage` answers, if any.
 - `pending`: at most one staged change.
 
-**Identification rule.** A patient is always identified by name plus date of birth, and by nothing else. A patient becomes `identified` when, among the matches `find_patient` returned, exactly one has `dob_matches: true`. A patient registered in this call is identified. A later `find_patient` that identifies a different patient replaces the identified one only if no change is pending. Caller ID is not used, logged or passed to the prompt; using it is a phase 2 topic. (Decision D7.)
+**Identification rule.** A patient is always identified by name plus date of birth, and by nothing else. A patient becomes `identified` when, among the patients whose name matches (§5.10), exactly one has that date of birth. A patient registered in this call is identified. A later `find_patient` that identifies a different patient replaces the identified one only if no change is pending. Caller ID is not used, logged or passed to the prompt; using it is a phase 2 topic. (Decision D7.)
 
 ### 5.3 The tools
 
@@ -183,20 +184,20 @@ Refusal codes are listed in §5.4.
 
 | Tool | Parameters | Does | Refuses with |
 |---|---|---|---|
-| `find_patient` | `name` string, `dob` date (`YYYY-MM-DD`), both required | Up to 3 patients whose name matches: `patient_id`, first name, first surname, `dob_matches` (bool). Never returns a date of birth or phone. More than 3 name matches → `too_many_matches` with a hint for what to ask (e.g. the second surname). Sets `identified` per §5.2 | `bad_arguments` (a field missing), `bad_dob` |
+| `find_patient` | `name` string, `dob` date (`YYYY-MM-DD`), both required | Matches the name per §5.10. If exactly one name match has that date of birth: `identified: {patient_id, first_name, last_name1}`, and that patient becomes `identified` (§5.2). Otherwise `identified: null`, `name_matches` (0 to 3, or 4 meaning "4 or more") and a `hint`: `check_details` (no name match, or no match with that date of birth) or `ask_second_surname` (several matches with that date of birth). Patient data is returned only for the identified match: never another patient's name, id, date of birth or phone. A call where the name matched someone but the date of birth matched no one counts as a failed attempt (`dob_failures`); after `FIND_PATIENT_MAX_DOB_FAILURES` (default 3) failed attempts, every later `find_patient` in the call is refused, and the agent offers to take a message. (Decision D16.) | `bad_arguments` (a field missing), `bad_dob`, `too_many_dob_attempts` |
 | `register_patient` | `first`, `last1`, `last2?`, `dob`, `phone` | **Stages** a new patient as the pending change; returns a provisional `patient_id` (`p_new1`) usable by `book` in this call, and identifies that patient. A `book` for it **extends the same pending change** to `register_book` (§10) instead of staging a second one. `confirm_pending` saves registration-only or registration plus booking, in one transaction | `lookup_first` (no `find_patient` in this call), `already_registered` (an exact name + dob match exists), `pending_exists`, `bad_phone`, `bad_dob` |
 | `list_appointments` | `patient_id` | The patient's appointments from `session.now` on, status `booked` | `not_identified`, `wrong_patient` |
 | `search_availability` | `treatment` (§5.5), `practitioner_id?`, `after?` date, `before?` date, `part_of_day?` `morning`\|`afternoon` | Up to 5 slots, earliest first, plus `blocked`: one entry per practitioner who can do the treatment but has no slot in the range, with `reasons` from §5.6. Window: from tomorrow to 28 days ahead (`BOOKING_HORIZON_DAYS`); for `urgency` only, it also includes today's slots that start at least `URGENCY_MIN_LEAD_MINUTES` after `session.now` (same-day rule below). Each slot carries `same_day` (bool) | `unknown_treatment`, `unknown_practitioner`, `bad_range`, `triage_required` (treatment `urgency` and no `record_triage` yet) |
 | `book` | `slot_id`, `patient_id`, `treatment` | Stages a booking; returns a summary to read back | `not_identified`, `wrong_patient`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `too_soon`, `patient_overlap`, `pending_exists`, `triage_required` |
 | `move` | `appointment_id`, `slot_id` | Stages a move to a slot for the same treatment | `appointment_not_seen`, `not_identified`, `wrong_patient`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `too_soon`, `appointment_started`, `pending_exists` |
 | `cancel` | `appointment_id` | Stages a cancellation | `appointment_not_seen`, `not_identified`, `wrong_patient`, `appointment_started`, `pending_exists` |
-| `confirm_pending` | – | Saves the staged change (and a staged registration with it) in one transaction, with its operation key. A retry of the same change returns the first result with `already_saved: true` | `nothing_pending`, `no_caller_reply` (no caller transcript logged after the change was staged), `caller_said_no` (the latest final caller turn contains a clear negative, §5.9; the change stays pending), `slot_taken` (lost a race; the change is discarded) |
+| `confirm_pending` | – | Saves the staged change (and a staged registration with it) in one transaction, with its operation key. A retry of the same change returns the first result with `already_saved: true` | `nothing_pending`, `no_caller_reply` (no caller transcript logged after the change was staged, after the wait in §5.11), `caller_said_no` (the latest final caller turn contains a clear negative, §5.9; the change stays pending, except on the second refusal in a row, which discards it and returns `discarded: true`), `slot_taken` (lost a race; the change is discarded) |
 | `discard_pending` | – | Drops the staged change (and a staged registration) | `nothing_pending` |
 | `record_triage` | `pain` bool, `swelling` bool, `fever` bool, `breathing_difficulty` bool, `trauma` bool, `heavy_bleeding` bool | Stores the answers. If any red flag (§6.2) is true, code plays `emergency`, logs an escalation, and the result says so | `bad_arguments` |
 | `take_message` | `name`, `phone`, `text`, `urgent?` bool (default false) | Saves a callback message at once (not staged). `urgent: true` marks it for staff as an urgent-pain callback (same-day rule below) | `bad_phone`, `bad_arguments` |
 | `record_no_action` | `reason` (§5.7) | Records why the call changed nothing. Can be called again; the last one wins | `unknown_reason`, `change_saved` (a change was already saved in this call) |
 | `clinic_info` | `topic` `hours`\|`location`\|`prices`\|`insurance`\|`treatments`\|`payment`\|`contact` | Catalogue text for the topic, nothing else | `unknown_topic` |
-| `escalate` | `reason` (§5.8), `urgency` `emergency`\|`urgent`\|`routine` | Logs an escalation. `urgency: emergency` makes code play `emergency` (once per call) | `unknown_reason`, `bad_arguments` |
+| `escalate` | `reason` (§5.8), `urgency` `emergency`\|`urgent`\|`routine` | Logs an escalation. `urgency: emergency` makes code play `emergency` (playback limits in §6.2) | `unknown_reason`, `bad_arguments` |
 
 Rules that apply across tools:
 
@@ -209,11 +210,12 @@ Rules that apply across tools:
 - **The call acts for one patient.** Every tool that takes a `patient_id` (`list_appointments`, `book`) refuses any id other than `identified` with `wrong_patient`; `move` and `cancel` refuse an appointment that does not belong to `identified` with the same code.
 - **Re-check on save.** `confirm_pending` re-checks the slot inside the write transaction. The database's overlap guard (§10) is the last line, not the first.
 - **A staged change that is never confirmed is never saved.** At `finish()`, any pending change is discarded and logged as `discarded` with `by: "finish"`.
-- **Confirmation needs a caller turn, and not a "no".** `confirm_pending` needs at least one caller transcript logged after the change was staged (`no_caller_reply`), and is refused with `caller_said_no` if the latest final caller turn contains a clear negative (§5.9). Neither check proves the caller said yes: the first stops the model from confirming in the same breath as staging, the second from confirming on a refusal or a "wait". The eval judge checks the yes itself. (Decision D11.)
+- **Confirmation needs a caller turn, and not a "no".** `confirm_pending` needs at least one caller transcript logged after the change was staged (`no_caller_reply`), and is refused with `caller_said_no` if the latest final caller turn contains a clear negative (§5.9). Neither check proves the caller said yes: the first stops the model from confirming in the same breath as staging, the second from confirming on a refusal or a "wait". The eval judge checks the yes itself. (Decision D11.) Echo transcripts (§7.7) count for neither check.
+- **Read-back is checked, not enforced.** When `confirm_pending` runs, it compares the staged change's date and time with what the agent said since staging (§5.12) and logs any mismatch. It never refuses on it in the MVP. (Decision D17.)
 
 ### 5.4 Error codes
 
-`bad_arguments`, `too_many_matches`, `lookup_first`, `already_registered`, `bad_phone`, `bad_dob`, `not_identified`, `wrong_patient`, `unknown_treatment`, `unknown_practitioner`, `bad_range`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `too_soon`, `patient_overlap`, `pending_exists`, `triage_required`, `appointment_not_seen`, `appointment_started`, `nothing_pending`, `no_caller_reply`, `caller_said_no`, `change_saved`, `unknown_reason`, `unknown_topic`, `store_unavailable`.
+`bad_arguments`, `too_many_dob_attempts`, `lookup_first`, `already_registered`, `bad_phone`, `bad_dob`, `not_identified`, `wrong_patient`, `unknown_treatment`, `unknown_practitioner`, `bad_range`, `slot_not_offered`, `treatment_mismatch`, `slot_taken`, `same_day`, `too_soon`, `patient_overlap`, `pending_exists`, `triage_required`, `appointment_not_seen`, `appointment_started`, `nothing_pending`, `no_caller_reply`, `caller_said_no`, `change_saved`, `unknown_reason`, `unknown_topic`, `store_unavailable`.
 
 `store_unavailable` is returned when the database cannot be written (locked past its busy timeout, disk error). Nothing is saved; the pending change stays pending, so the model can retry `confirm_pending` once.
 
@@ -239,10 +241,11 @@ The first six are from PLAN.md. `emergency_referred`, `technical_failure` and `c
 2. An emergency escalation → `emergency_referred`
 3. A message was taken → `message_taken`
 4. A change was discarded at `finish()` → `caller_hung_up`
-5. `find_patient` was called and no one was identified → `not_identified`
-6. A search returned no slots → `no_suitable_slot`
-7. `clinic_info` was called → `info_only`
-8. Otherwise → `out_of_scope`
+5. A change was discarded after two refusals in a row (§5.9) → `caller_declined`
+6. `find_patient` was called and no one was identified → `not_identified`
+7. A search returned no slots → `no_suitable_slot`
+8. `clinic_info` was called → `info_only`
+9. Otherwise → `out_of_scope`
 
 ### 5.8 Escalation reasons
 
@@ -261,13 +264,54 @@ The list errs towards refusing: "sí, no hay problema" or "yes, don't worry" are
 
 EN-04 ships unit tests for the list: every entry triggers on its own and inside a sentence in its language; case, accents and punctuation do not matter; whole-word matching holds (`noviembre`, `nota`, `cancellation`, `waiter` do not trigger); clear yeses ("sí", "vale, perfecto", "sí, por favor", "yes please", "that's fine") pass; and the known false refusals above are asserted as refused, so a change to that behaviour is deliberate.
 
+**After a "no": one closed question, then discard.** (Decision D19.)
+
+- The `caller_said_no` result tells the model to ask one closed yes-or-no question about the staged change (for example "¿Quiere que guarde la cita del martes a las diez, sí o no?"), not an open one. The brain prompt (VO-01) says the same.
+- The session counts `caller_said_no` refusals on the current pending change. A refusal counts only if it read a newer caller turn than the previous one, so two calls on the same turn are one refusal. A save, a discard or a newly staged change resets the count.
+- The **second** refusal in a row on the same pending change discards it: the result is `{"ok": false, "error": "caller_said_no", "discarded": true, "message": ...}`, the session logs `discarded` with `by: "said_no"`, and the message tells the model to say the change was not saved. Anything the caller wants next starts from a new staging call.
+- EN-04 test: stage a booking; caller "no" → `confirm_pending` refused, still pending; `confirm_pending` again on the same turn → refused, still pending; caller "no, mejor no" → refused with `discarded: true`, nothing in `appointments` or `changes`, one `discarded` event with `by: "said_no"`, and a later `confirm_pending` returns `nothing_pending`. A second case: "no", then "sí" → saved.
+
+### 5.10 Name matching (`find_patient`)
+
+Names come from speech-to-text, so `find_patient` matches on a normalised, folded form of the name, in `app/names.py` (EN-04). Both the spoken name and the stored names go through the same steps:
+
+1. Lowercase, strip accents (`á` → `a`, `ñ` → `n`, `ü` → `u`), turn every character that is not a letter into a space, and split into words.
+2. Drop the particles `de`, `del`, `la`, `las`, `los`, `y`, `i`.
+3. Fold common Spanish spelling variants, in this order: `ge`/`gi` → `je`/`ji`; `ce`/`ci` → `se`/`si`; `z` → `s`; `qu` → `k`; `c` before `a`, `o`, `u` or a consonant other than `h` → `k`; `v` → `b`; `ll` → `y`; `h` dropped unless after `c`; `y` not followed by a vowel → `i`; `x` at the start of a word → `j`; then any doubled letter becomes one.
+
+A patient's name matches when the first word of their first name and every word of their first surname appear among the spoken words, in any order. Extra spoken words (a second surname, a middle name) are ignored. There is no edit-distance matching in the MVP: the date of birth is the second factor, and a looser match would only produce more ambiguous results.
+
+EN-04 ships tests: these pairs match (Jiménez / Giménez, Vázquez / Basques, Hernández / Ernandes, Llorente / Yorente, Isabel / Ysabel, González / Gonsalez, Cecilia / Sesilia, Ximena / Jimena, Marcello / Marcelo, "de la Fuente" / "Fuente"); these do not (Martín / Martina, Rosa / Rosas, Pérez / Peña, Luis / Luisa); case, accents and punctuation never matter; and a result never carries data of a patient other than the identified one.
+
+### 5.11 Transcript timing at confirmation
+
+A final caller transcript can reach the server after the model has already acted on what the caller said, most of all in the speech-to-speech layers. So `confirm_pending` does not refuse with `no_caller_reply` at once (Decision D15):
+
+- If no caller transcript was logged after staging, `confirm_pending` waits up to `CONFIRM_TRANSCRIPT_WAIT_SECS` (default 1.0 s) for a newer final, non-echo caller transcript. If one arrives, the check (and the negative check, §5.9) runs on it; otherwise the refusal is `no_caller_reply`. The wait runs inside a `busy` scope, so it holds the silence guard.
+- **Transcript missing.** If the transport detected at least `TRANSCRIPT_MISSING_MIN_SPEECH_SECS` (default 1.0 s) of caller speech and no final caller transcript for it arrives within `TRANSCRIPT_MISSING_SECS` (default 2.0 s) after the speech ended, the plumbing logs `transcript_missing` and arms the silence guard (§7.1) with its deadline `RESPONSE_TIMEOUT_SECS` after the speech ended. That is all it does: it never counts as a caller reply for `confirm_pending`, never updates `last_caller_text`, and is not read by the red-flag matcher or the dead-air prompts.
+- **VO-02 measures it.** On each speech-to-speech layer, VO-02 logs, for every `ask_clinic` call, when the matching caller transcript arrived relative to the call, and reports how often it came after the call and by how much (p50, p90, max). The default of `CONFIRM_TRANSCRIPT_WAIT_SECS` is set from that measurement.
+
+### 5.12 Read-back check
+
+When `confirm_pending` runs on a `book`, `register_book`, `move` or `cancel`, the session compares the change's date and time (for a cancel, the cancelled appointment's) with every agent transcript logged since the change was staged (`app/readback.py`, EN-04). It recognises dates and times written as digits or spoken in either language ("10:30", "diez y media", "half past ten", "martes 10", "Tuesday the tenth").
+
+- If the agent mentioned a date or time that differs from the change, or mentioned neither, the session logs `readback_mismatch` with `kind` `wrong`\|`missing`, the change's ISO and spoken time, and the agent text it read. The outcome carries the `readback_mismatch` flag, and the console shows it on the call (CO-01, CO-02).
+- In the MVP it never refuses or delays the save. (Decision D17.)
+- EN-04 tests the parser on both languages; the audio eval run (§12) shows how often real speech-to-speech read-backs trigger it.
+
 ---
 
 ## 6. Fixed phrases
 
 ### 6.1 The catalogue
 
-Prerecorded clips, one per phrase and language, at `backend/app/voice/clips/<id>.<lang>.wav` (mono, 16-bit, 24 kHz). They are generated from the text below with the local Kokoro voice (`make clips`) and committed, so they play even when every provider is down. The text in this table is the source; change it here and regenerate.
+Prerecorded clips, one per phrase and language, in one set per voice: `backend/app/voice/clips/<voice_set>/<id>.<lang>.wav` (mono, 16-bit, 24 kHz). They are committed, so they play even when every provider is down. The text in this table is the source; change it here and regenerate. (Decision D18.)
+
+- **Voice sets.** Each layer names the set that sounds like its own voice, from its config: `kokoro-<KOKORO_VOICE>` for `cascade` (today `kokoro-ef_dora`), `gemini-<GEMINI_VOICE>` for `gemini` (today `gemini-kore`), `openai-<voice>` for `openai` once VO-05 picks a voice, lowercased. `none` needs no set. The active set is logged in `voice_config` (`voice_set`).
+- **Pluggable generator.** `make clips VOICE_SET=<set>` (default: the active `VOICE`'s set) renders every phrase in both languages through a generator module `app/voice/clipgen/<engine>.py` that exposes `render(text, lang, voice) -> bytes` (WAV in the format above). `kokoro` runs locally at no cost. A generator that calls a paid provider (`gemini`, `openai`) refuses to run without `--paid`, and is run only with the human's approval, recorded on the board.
+- **Manifest per set.** `clips/<voice_set>/manifest.json` records `voice_set`, the generator, its model and voice, and each clip's rendered text and SHA-256.
+- **Start-up check.** The call server checks the active `VOICE`'s set: every phrase in both languages present, the manifest's `voice_set` equal to the active one, and every rendered text equal to the table rendered from the seed (below). It refuses to start otherwise. `CLIPS_VOICE_SET` may point a development server at another set (for example the Kokoro set while no Gemini set exists); the server logs the override, and OP-02 does not launch with one set.
+- **No caller data.** Clip text holds only the fixed text and the clinic facts below, never anything from a call.
 
 | ID | When | Spanish | English |
 |---|---|---|---|
@@ -289,7 +333,7 @@ No phrase may contain a word that could be heard as agreement ("sí", "vale", "d
 - `{clinic_name}`: `site.name`, as written.
 - `{clinic_phone}`: `site.phone` (E.164), spoken by `spoken_phone(phone, lang)` in `app/clinic.py`: the country code dropped for a Spanish number, then the nine digits read one by one in three groups of three, in the clip's language ("nueve uno cero, ..."; "nine one zero, ..."). The same function gives the brain the spoken number for `clinic_info(contact)`, so the clip and the agent say it the same way.
 
-`make clips` reads the `site` row from the seeded database, renders every phrase, and writes `clips/manifest.json` with each clip's rendered text and its SHA-256. A test (VO-03) renders the table from the seed and fails if any rendered text differs from the manifest, so a changed name or number cannot ship with stale clips. The call server runs the same comparison at start-up and refuses to start on a mismatch. The seeded number (EN-01) must be one that cannot reach a real person or business.
+`make clips` reads the `site` row from the seeded database, renders every phrase, and writes the set's `manifest.json`. A test (VO-03) renders the table from the seed and fails if any rendered text differs from any committed set's manifest, so a changed name or number cannot ship with stale clips. The call server runs the same comparison for the active set at start-up (above). The seeded number (EN-01) must be one that cannot reach a real person or business.
 
 **Emergency phrase is conditional.** `emergency` names the red flags and says what to do *if* the caller has one, so it stays sensible when the matcher fires on a false alarm (§6.2), and it is still the right instruction when triage confirmed a red flag.
 
@@ -299,7 +343,9 @@ The speech-to-speech model handled a toothache in FD-01 without ever mentioning 
 
 1. **The brain's triage:** `record_triage` with `breathing_difficulty`, `trauma` or `heavy_bleeding` true, or `swelling` and `fever` both true.
 2. **The brain's escalation:** `escalate` with `urgency: emergency`.
-3. **A transcript matcher in code**, run on every final caller transcript, independent of both models. It matches fixed phrase lists per language (`app/redflags.py`, VO-01) for trouble breathing, swelling with fever, a blow or accident to the face or mouth, and bleeding that will not stop. It is tuned to miss nothing in the eval scenarios; a false alarm costs one conditional sentence that does not claim the caller is in danger. (Decision D2.)
+3. **A transcript matcher in code**, run on every final caller transcript, independent of both models. It matches fixed phrase lists per language (`app/redflags.py`, VO-01) for trouble breathing, swelling with fever, a blow or accident to the face or mouth, and bleeding that will not stop. It errs towards firing: a false alarm costs one conditional sentence that does not claim the caller is in danger. (Decision D2.) It also reads echo transcripts (§7.7), for the same reason.
+
+**Tuning and holdout.** (Decision D20.) The phrase lists are tuned on `tests/redflags/tuning.yaml` (red-flag and ordinary pain phrases, both languages), and every tuning phrase must give the expected result. A separate `tests/redflags/holdout.yaml`, written before the lists and never used to change them, measures them: VO-01 reports recall on its red-flag phrases and the false-alarm rate on its other phrases, and the README quotes both. A holdout phrase that reveals a gap may be moved to the tuning set, but then a new holdout phrase is written in its place, without looking at the lists.
 
 **Clinical sign-off.** The red-flag list (the triage fields, the matcher's phrase lists and the `emergency` text) is a demo default written without clinical review. Before any real clinic uses the agent, a licensed dentist must validate it, and the validation is recorded in the repository with the reviewer's role and date. (Decision D13.)
 
@@ -307,7 +353,7 @@ What happens, whichever trigger fires first:
 
 - `CallControl.play("emergency")`, then an `escalation` event (`reason` from §5.8, `urgency: emergency`, `trigger: triage | escalate | matcher`) and an `emergency` flag on the outcome.
 - **Reason for triage and matcher triggers:** trouble breathing → `red_flag_breathing`, swelling with fever → `red_flag_swelling_fever`, blow or accident → `red_flag_trauma`, bleeding that will not stop → `red_flag_bleeding`. When several flags fire at once, one `escalation` is logged with the first reason in that order, and the event's `red_flags[]` lists them all. The `escalate` trigger uses the reason the brain passed.
-- **Once per call.** Later triggers log `escalation` again with `repeat: true` but do not replay the clip. If the caller asks again what to do, the brain repeats the advice in its own words; the guarantee was the first playback.
+- **At most twice per call.** (Decision D21.) If every playback so far came from the matcher, a later `triage` or `escalate` trigger plays `emergency` once more, because the brain has now confirmed what the matcher only suspected. Otherwise later triggers do not replay it. No call hears it more than twice. Every later trigger logs `escalation` again with `repeat: true`. If the caller asks again what to do, the brain repeats the advice in its own words.
 - The call goes on afterwards. The agent may take a message or book an urgency slot if the caller asks for one, but must not suggest that a dental appointment replaces emergency care. (Decision D3.)
 
 **Pain without a red flag.** Any `urgency` search needs `record_triage` first (`triage_required`). That makes the brain ask the triage questions before offering an urgency slot, whichever voice is active.
@@ -324,9 +370,9 @@ All of it lives in the shared plumbing, as pure logic fed with events and the ti
 
 FD-01 measured three failures with Gemini Live: silences of 8 to 12 s after the caller finished, caller turns skipped entirely, and an agent that stayed silent for the rest of the call after being told to shut up. The response guard covers all three.
 
-**Final caller transcript** means a caller text that the voice layer logs as a `transcript` event with `role: "caller"`. Interim speech-to-text results are never logged as transcripts and never arm, disarm or reset anything here; the red-flag matcher and the dead-air prompts read the same events.
+**Final caller transcript** means a caller text that the voice layer logs as a `transcript` event with `role: "caller"`. Interim speech-to-text results are never logged as transcripts and never arm, disarm or reset anything here; the red-flag matcher and the dead-air prompts read the same events. A caller transcript logged with `echo: true` (§7.7) is not a final caller transcript for the guard or the dead-air prompts: it arms, disarms and resets nothing. Only the red-flag matcher reads it.
 
-**It arms** when a final caller transcript arrives and the agent is not speaking at that moment. The deadline is `RESPONSE_TIMEOUT_SECS` (default 5.0 s) after the transcript arrives.
+**It arms** when a final caller transcript arrives and the agent is not speaking at that moment. The deadline is `RESPONSE_TIMEOUT_SECS` (default 5.0 s) after the transcript arrives. It also arms on `transcript_missing` (§5.11), with the deadline counted from the end of the caller's speech.
 
 **It disarms** when any agent audio leaves the server (model speech or a fixed phrase), or when new caller speech starts. New caller speech re-arms it from the next final caller transcript. A caller turn with no agent audio before the next caller turn counts as **skipped** and is logged as such; the guard keeps running on the latest turn.
 
@@ -385,8 +431,34 @@ Separate from the response guard. When the agent's audio has ended and no caller
 | `BOOKING_HORIZON_DAYS` | 28 | Furthest day `search_availability` offers |
 | `URGENCY_MIN_LEAD_MINUTES` | 120 | Shortest time from `session.now` to a same-day `urgency` slot (§5.3) |
 | `REVIEW_LINK_DAYS` | 7 | Review link lifetime (§11) |
+| `ECHO_WINDOW_SECS` | 8 | How far back agent text is compared for echo (§7.7) |
+| `ECHO_TAIL_SECS` | 0.5 | Caller speech that starts this soon after agent audio ends still counts as overlapping (§7.7) |
+| `ECHO_MATCH_RATIO` | 0.8 | Share of the caller transcript's words found, in order, in recent agent text (§7.7) |
+| `CONFIRM_TRANSCRIPT_WAIT_SECS` | 1.0 | `confirm_pending` waits this long for a newer caller transcript before `no_caller_reply` (§5.11) |
+| `TRANSCRIPT_MISSING_MIN_SPEECH_SECS` | 1.0 | Caller speech long enough to expect a transcript (§5.11) |
+| `TRANSCRIPT_MISSING_SECS` | 2.0 | Speech ended with no transcript → `transcript_missing` (§5.11) |
+| `FIND_PATIENT_MAX_DOB_FAILURES` | 3 | Failed date-of-birth attempts per call before `too_many_dob_attempts` (§5.3) |
+| `CLIPS_VOICE_SET` | unset | Development override of the clip set (§6.1) |
 
 The 5 s default sits above the cascade's p90 heard latency in FD-01 (3.3 s, before overlap reporting) and well below the 8-12 s silences it must catch.
+
+### 7.7 Echo
+
+With speakers instead of headphones, the agent's own voice can come back through the caller's microphone and be transcribed as caller speech. An echoed read-back would then count as a caller reply, and an echoed "no" in the agent's question as a refusal. (Decision D14.)
+
+A final caller transcript is **echo** when both hold:
+
+1. **It overlaps agent audio:** its caller speech segment (from the transport's speech detection) starts while agent audio is going out, or less than `ECHO_TAIL_SECS` after it ended.
+2. **It closely matches recent agent text:** after the normalisation of §5.9, at least `ECHO_MATCH_RATIO` of its words appear, in order, in the agent transcripts of the last `ECHO_WINDOW_SECS`. Transcripts of fewer than 3 words are never echo, so a short real "no" or "sí" is never dropped.
+
+The plumbing checks this before logging (`app/voice/echo.py`, pure logic, VO-02) and logs the transcript with `echo: true`. An echo transcript:
+
+- does not count as a caller reply for `no_caller_reply`, is not read by the negative check (§5.9), and does not update `last_caller_text`;
+- arms, disarms and resets nothing in the silence guard or the dead-air prompts (§7.1, §7.4);
+- **is** read by the red-flag matcher (§6.2): a false alarm is cheap, a missed red flag is not;
+- is shown in the console marked as echo, and counted in `audio_metrics` (`echo_transcripts`).
+
+VO-02 unit-tests the rule with recorded timing: an echoed read-back overlapping agent audio is echo; the same words after a pause longer than `ECHO_TAIL_SECS` are not; a two-word "no, espera" over agent audio is not.
 
 ---
 
@@ -407,8 +479,9 @@ The log is private: it holds transcripts and patient data. Only the console API 
 | kind | Fields | Status |
 |---|---|---|
 | `call_started` | `schema`, `now` (call clock, ISO), `monotonic`, `voice`, `channel` (`browser`\|`bench`\|`eval`\|`phone`), `language` (starting language) | Built (no `schema` or `language` yet) |
-| `voice_config` | `voice` plus the layer's models and voice names | Built |
-| `transcript` | `role` `caller`\|`agent`, `text`, `interrupted?` (agent), `language?` | Built |
+| `voice_config` | `voice` plus the layer's models and voice names, `voice_set` (§6.1), `clips_override?` | Built (`voice_set` to build) |
+| `transcript` | `role` `caller`\|`agent`, `text`, `interrupted?` (agent), `language?`, `speech?` (`[start, end]` of the caller speech segment), `echo?` (caller, §7.7) | Built (`speech`, `echo` to build) |
+| `transcript_missing` | `speech` (`[start, end]`), `waited_secs` (§5.11) | To build |
 | `language_changed` | `language` | To build |
 | `greeting_latency` | `secs` | Built |
 | `latency` | `secs` (server: caller stopped → first agent audio out) | Built |
@@ -419,11 +492,12 @@ The log is private: it holds transcripts and patient data. Only the console API 
 | `tool_call` / `tool_result` | `id`, `name`, `args` / `id`, `ok`, `result` or `error`, `message` | To build |
 | `staged` | `change` (`register`\|`book`\|`register_book`\|`move`\|`cancel`), `details`, `operation_key` | To build |
 | `saved` | `change`, `operation_key`, `change_ids[]` (one id; for `register_book` the register id then the book id), `already_saved` | To build |
-| `discarded` | `change`, `operation_key`, `by` (`tool`\|`finish`\|`race`) | To build |
+| `discarded` | `change`, `operation_key`, `by` (`tool`\|`finish`\|`race`\|`said_no`) | To build |
+| `readback_mismatch` | `change`, `operation_key`, `kind` `wrong`\|`missing`, `expected` (ISO and spoken), `heard` (§5.12) | To build |
 | `triage` | the six answers, `red_flags[]` | To build |
 | `escalation` | `reason`, `urgency`, `trigger`, `red_flags?` (triage and matcher triggers), `repeat?` | To build |
 | `message_taken` | `message_id`, `urgent` | To build |
-| `phrase_played` | `phrase`, `language`, `secs` | To build |
+| `phrase_played` | `phrase`, `language`, `voice_set`, `secs`, `interrupted?` (§3.4) | To build |
 | `silence_guard_fired` | `turn`, `waited_secs`, `attempt` | To build |
 | `silence_guard_recovered` | `turn`, `extra_secs` | To build |
 | `turn_skipped` | `turn` | To build |
@@ -439,7 +513,7 @@ The log is private: it holds transcripts and patient data. Only the console API 
 | `review_link_created` | `expires_at` (never the token) | To build (CO-05) |
 | `call_ended` | `duration_secs` | Built |
 
-`outcome` is written exactly once, by `finish()`, before `call_ended`. Its `flags` come from this list: `emergency`, `provider_quota`, `voice_unresponsive`, `call_cap`, `brain_error`, `same_day_urgent` (a same-day urgency booking was saved), `urgent_callback` (an urgent callback message was taken). The console's "quota" filter reads `provider_quota`; its "needs staff today" filter reads `same_day_urgent` and `urgent_callback`.
+`outcome` is written exactly once, by `finish()`, before `call_ended`. Its `flags` come from this list: `emergency`, `provider_quota`, `voice_unresponsive`, `call_cap`, `brain_error`, `same_day_urgent` (a same-day urgency booking was saved), `urgent_callback` (an urgent callback message was taken), `readback_mismatch` (§5.12). The console shows `readback_mismatch` on the call list and the review page. The console's "quota" filter reads `provider_quota`; its "needs staff today" filter reads `same_day_urgent` and `urgent_callback`.
 
 ---
 
@@ -459,7 +533,7 @@ The log is private: it holds transcripts and patient data. Only the console API 
 
 ### 9.3 Audio metrics (`audio_metrics` event, after the call)
 
-`greeting_secs`, `turns`, `answered_turns`, `overlapped_turns`, `overlap_rate`, `latency_p50_ms`, `latency_p90_ms`, `skipped_turns`, `guard_firings`, `dead_air_secs` (total gaps over 3 s with nobody speaking), `barge_ins`, `yield_p50_ms` (caller starts over agent → agent audio stops), `underruns`.
+`greeting_secs`, `turns`, `answered_turns`, `overlapped_turns`, `overlap_rate`, `latency_p50_ms`, `latency_p90_ms`, `skipped_turns`, `guard_firings`, `dead_air_secs` (total gaps over 3 s with nobody speaking), `barge_ins`, `yield_p50_ms` (caller starts over agent → agent audio stops), `underruns`, `echo_transcripts` (§7.7), `transcripts_missing` (§5.11).
 
 ---
 
@@ -521,11 +595,11 @@ CREATE TABLE review_links (token_sha256 TEXT PRIMARY KEY, call_id TEXT NOT NULL 
 
 ## 11. Review link and public calls (CO-05)
 
-- **Before the call.** The page with the talk button (landing and Studio, CO-03) states, next to the button and before the microphone is requested, that the call is recorded and that the caller will talk to an AI, and how long the recording is kept (`REVIEW_LINK_DAYS`). The opening of the call says the same (`greeting`, §6.1). (Decision D10.)
+- **Before the call.** The page with the talk button (landing and Studio, CO-03) states, next to the button and before the microphone is requested, that the call is recorded and that the caller will talk to an AI, and how long the recording is kept (`REVIEW_LINK_DAYS`). It also warns visitors not to give real names, health details or phone numbers, and to use the made-up details of a Studio card instead. The microphone is requested only after the visitor has seen both. The opening of the call says the recording and AI part (`greeting`, §6.1). (Decisions D10, D23.)
 - **Which calls get a link.** Only calls on a public channel (`browser` today, `phone` in phase 2) get a review link, and every such call gets one. `bench` and `eval` calls never do, so the purge below never touches them.
 - When such a call ends, the session creates a token with `secrets.token_urlsafe(32)` (256 random bits). The link is `/r/<token>` on the public call server.
 - Only `sha256(token)` is stored (`review_links`), with an expiry of `REVIEW_LINK_DAYS` (default 7) days. The token itself is shown once, to the caller's browser, at hang-up. It never appears in the log.
-- The public route serves that one call's review: transcript, recording and tool steps, **redacted**: tool arguments and results show only the identified patient's own data; other patients returned by `find_patient` show as "another patient". (Decision D10.)
+- The public route serves that one call's review: transcript, recording and tool steps, **redacted**: tool arguments and results show only the identified patient's own data (`find_patient` never returns anyone else's, §5.3), and a `find_patient` that identified no one shows only its count. (Decision D10.)
 - An unknown, expired or malformed token returns 404, the same response in each case. No public route lists calls or accepts a `call_id`.
 - **At expiry the data goes, not just the link.** For each expired `review_links` row, a purge (`scripts/purge_expired.py`, run hourly by a timer and once at call-server start-up, OP-02) deletes everything kept for that call: the call log `data/calls/<call_id>.jsonl`, `recordings/<call_id>.wav` and `.timing.json`, the call's `messages` rows, patients registered in that call (`created_by_call`) with their appointments, appointments created by that call (`created_by_call`), the `changes` rows of that call, and finally the `review_links` row. Moves and cancellations of seeded appointments hold no caller data and are undone by the nightly demo reset (OP-01). Each purge appends one line to `data/purge.log` with the `call_id`, the time and the counts deleted, and nothing else. The console loses the call at the same moment. Calls with no review link (`bench`, `eval`) are not touched. CO-05 tests that after the purge no file or row with that `call_id` remains.
 
@@ -569,22 +643,25 @@ Default checks on every scenario: database state equals `expect.changes` and not
 
 Text-only evals run the brain and tools with no voice layer: the simulated caller's lines are the caller transcripts, and the brain's `say` is the agent transcript. Fixed phrases are logged as `phrase_played` and appear in the agent transcript as their text.
 
+**What the text evals measure.** They measure the brain's decisions: which tools it calls, what it stages and saves, and what it asks the voice to say. They do not measure what a speech-to-speech layer actually says, which can differ from the brain's `say` (a wrong time read back, a fact no tool returned). The audio eval run (EV-04) covers that: for each scenario it checks the read-back against the staged change (the `readback_mismatch` events, §5.12) and flags invented facts, meaning any date, time, price or name in the agent transcript that no tool result or fixed phrase gave. (Decision D17.)
+
 ---
 
 ## 13. Metrics: how numbers are reported
 
-- **Every latency figure goes out with its overlap rate and its count.** The latency distribution leaves out overlapped turns (the agent's audio started before the caller finished, or less than 150 ms after), so a median alone can look better than the call felt: in one Gemini browser test 4 of 8 turns overlapped. Format: `p50 1490 / p90 1991 ms (n = 42 answered, overlap 9%, 1 unanswered)`.
+- **Every latency figure goes out with its overlap rate and its count.** The latency distribution leaves out overlapped turns (the agent's audio started before the caller finished, or less than 150 ms after), so a median alone can look better than the call felt: in one Gemini browser test 4 of 8 turns overlapped. Format, with placeholder values: `p50 <P50> / p90 <P90> ms (n = <N> answered, overlap <X>%, <U> unanswered)`. (Decision D24.)
 - **Overlap rate** = overlapped turns / (answered + overlapped turns).
 - **Unanswered turns** (the guard fired, or the turn was skipped) are reported as a count beside the latency, never folded into it.
 - **Say which latency.** *Heard* latency is measured at the caller (bench or browser page); *server* latency is caller stopped → first agent audio out at the server. They differ by the network and the caller's audio path. Tables name which one they show.
 - **Cost** is reported per call minute and per call, with the date of the prices assumed (`PRICES_AS_OF` in `scripts/call_costs.py`), and whether the run was billed (free-tier runs are priced at paid rates).
+- **Text evals are not voice evals.** Task success from the text evals (§12) is a measure of the brain's decisions, not of what a speech-to-speech layer says. Tables say which run a number comes from; read-back errors and invented facts are reported only from the audio run (EV-04).
 - Bench and browser reports (VO-06) and the README tables follow these rules.
 
 ---
 
 ## 14. Decisions
 
-All thirteen were decided by the human on 2026-11-08. This file already specifies each final decision; changing one now follows the rule at the top of this file.
+D1 to D13 were decided by the human on 2026-11-08. D14 to D24 are changes the human asked for on 2026-11-08, after the review of D1 to D13. This file already specifies each final decision; changing one now follows the rule at the top of this file.
 
 | # | Topic | Status | Final decision | Where |
 |---|---|---|---|---|
@@ -601,3 +678,14 @@ All thirteen were decided by the human on 2026-11-08. This file already specifie
 | D11 | Confirmation check | **Decided: changed** | `confirm_pending` still needs a caller turn after staging, and is also refused with `caller_said_no` when the latest final caller turn contains a clear negative from a bilingual whole-word list. A false refusal only makes the agent ask again. EN-04 ships unit tests for the list | §5.3, §5.9 |
 | D12 | Default `VOICE` in code | **Decided: accepted** | `cascade` until the Gemini paid tier and VO-05; no automatic failover | §3.1 |
 | D13 | Red-flag list | **Decided: accepted with an addition** | PLAN.md's three (trouble breathing, swelling with fever, trauma) plus bleeding that will not stop. A licensed dentist must validate the list before any real clinic uses it | §6.2 |
+| D14 | Echo | **Decided: asked by the human** | A caller transcript that overlaps agent audio and closely matches recent agent text is logged with `echo: true`. It counts for neither `no_caller_reply` nor the negative check, and arms nothing in the silence guard or the dead-air prompts. The red-flag matcher still reads it. Transcripts under 3 words are never echo | §3.2, §5.2, §7.1, §7.7, §8 |
+| D15 | Transcript timing | **Decided: asked by the human** | Before refusing with `no_caller_reply`, `confirm_pending` waits up to `CONFIRM_TRANSCRIPT_WAIT_SECS` (1.0 s) for a newer caller transcript. At least 1 s of detected caller speech with no transcript within `TRANSCRIPT_MISSING_SECS` logs `transcript_missing` and arms only the silence guard; it is never a reply. VO-02 measures transcript arrival against tool calls on each speech-to-speech layer | §5.11, §7.1, §7.6, §8 |
+| D16 | What `find_patient` returns | **Decided: asked by the human** | Patient data only for the one match with that date of birth; otherwise a match count and a hint. At most 3 failed date-of-birth attempts per call, then `too_many_dob_attempts`. Names are matched with case, accents and particles ignored and common Spanish spelling variants folded, with tests. `too_many_matches` is removed | §5.2, §5.3, §5.4, §5.10, §11 |
+| D17 | Read-back and what text evals measure | **Decided: asked by the human** | At `confirm_pending`, the staged date and time are compared with the agent transcript since staging; a mismatch is logged as `readback_mismatch` and flagged in the console, never blocking in the MVP. Text evals measure the brain's decisions; the audio run covers read-back and invented facts | §5.3, §5.12, §8, §12, §13 |
+| D18 | Clips per voice | **Decided: asked by the human** | One clip set per voice at `clips/<voice_set>/<id>.<lang>.wav`, rendered by a pluggable generator, with the set recorded in its manifest and checked for the active `VOICE` at start-up. Clip text holds no caller data. Paid generators run only with the human's approval | §6.1, §7.6, §8 |
+| D19 | After a "no" | **Decided: asked by the human** | After `caller_said_no` the agent asks a closed yes-or-no question. A second refusal in a row on the same pending change discards it, and the agent says it was not saved. EN-04 tests it | §5.3, §5.7, §5.9, §8 |
+| D20 | Red-flag matcher tuning | **Decided: asked by the human** | Tuned on one phrase set, measured on a holdout set never used for tuning; recall and false-alarm rate are reported | §6.2 |
+| D21 | Emergency replay | **Decided: asked by the human** | If every playback so far came from the matcher, a later triage or escalate trigger plays `emergency` once more; at most two playbacks per call | §5.3, §6.2 |
+| D22 | Barge-in on clips | **Decided: asked by the human** | `greeting` and `emergency` always play to the end; every other clip stops when the caller starts speaking | §3.4, §8 |
+| D23 | Warning before the microphone | **Decided: asked by the human** | The page warns visitors, before the microphone is requested, not to give real names, health details or phone numbers | §11 |
+| D24 | Metrics example | **Decided: asked by the human** | The reporting format in §13 uses placeholder values, not measured ones | §13 |
