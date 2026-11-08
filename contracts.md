@@ -13,7 +13,7 @@ The formats and rules every lane builds against. PLAN.md says what we build and 
 1. **No business rule depends on which voice layer is active.** Identification, slot validity, staging, confirmation, red flags, the silence guard, the call cap and the outcome all live in the session, the tools, the engine or the shared call plumbing (`app/voice/common.py`). A voice layer only moves audio and text, and hands clinic questions to the brain.
 2. **Safety-critical speech is played by code, never generated.** The opening (which says the call is recorded and the caller is talking to an AI), the emergency instruction, silence recovery, quota and technical-failure messages are fixed phrases (§6), played as prerecorded clips. A model may say similar things in its own words, but the guarantee does not rely on it.
 3. **Tools never raise.** Every tool returns a JSON object. A refusal is a normal result with an error code from a closed list and a message the model can say to the caller in its own words.
-4. **Every call reads one clock** (§2). No code under `backend/engine/`, and no code in `app/session.py`, `app/tools.py`, `app/prompt.py` or `app/clinic.py`, reads the wall clock.
+4. **Every call reads one clock** (§2). No code under `backend/engine/`, and no code in `app/session.py`, `app/tools.py`, `app/prompt.py` or `app/clinic.py`, reads the wall clock. The single exception is the one read in `CallSession.start()` described in §2.
 5. **Closed vocabularies are closed.** Reason codes, topics, treatments, error codes and event kinds are listed here. A value outside the list is refused, never stored.
 
 ---
@@ -31,7 +31,7 @@ Rules:
 
 - **"Today"** is `session.now.date()` in the clinic's zone. A call that runs past midnight still uses the date it started on (the call cap keeps this to minutes).
 - Engine functions take `now` as a parameter. They have no default that reads the wall clock.
-- Only `CallSession.start()` may read the wall clock, and only when no `now` was passed. A test (`tests/test_no_wall_clock.py`, EN-04) scans the files in principle 4 for `datetime.now(`, `datetime.utcnow(`, `date.today(` and `time.time(`, and fails if any appear.
+- Only `CallSession.start()` may read the wall clock, and only when no `now` was passed. A test (`tests/test_no_wall_clock.py`, EN-04) scans the files in principle 4 for `datetime.now(`, `datetime.utcnow(`, `date.today(` and `time.time(`, and fails if any appear, except one line inside `CallSession.start()` marked with the comment `# wall-clock: call start`. The test also fails if that marker appears more than once or outside `start()`.
 - **Steady clock for audio.** Pipecat's WebRTC transport and turn detection time durations with `time.time()`. `app/steady_clock.install()` gives those modules a `time()` that moves only with the monotonic clock, so a wall clock that steps cannot drop agent audio or misjudge a turn. The call server installs it before any call. Any new Pipecat module that times audio or turns with `time.time()` is added to `steady_clock.MODULES`. (Built.)
 
 ---
@@ -83,7 +83,7 @@ The `none` stub is exempt from 1 to 7: it says nothing, has no prompt, no brain,
 | Field | Type | Set by | Rule |
 |---|---|---|---|
 | `session.now` | aware `datetime` | `CallSession.start()` | §2. Never changes during the call |
-| `session.greeting` | str | session | The text of the `greeting` clip in the starting language, logged as the first agent `transcript` |
+| `session.greeting` | str | session | Set by `CallSession.start()` from the `greeting.<lang>` entry of `clips/manifest.json` (§6.1), in the starting language. The plumbing logs it as an agent `transcript` when it plays the `greeting` clip |
 | `session.language` | `"es"` \| `"en"` | call server at start; then the voice layer, through `session.set_language(lang)` | Starts as the language of the page the call came from (`es` if none), so the opening disclosure is in a language the visitor reads. The cascade sets it from the speech-to-text language tag of each final caller transcript; the speech-to-speech layers from the `language` of each `ask_clinic`. A change is logged as `language_changed`. Tools, the brain and fixed phrases read it; nothing else writes it |
 
 ### 3.4 What the shared plumbing gives every layer (to build in VO-02 and VO-03)
@@ -168,7 +168,7 @@ In the cascade the text model already reads the caller's words, so it **is** the
 The session keeps, for the current call only:
 
 - `patients_seen`: every patient returned by `find_patient`, and patients registered in this call.
-- `last_caller_text`: the latest final caller transcript (§7.1) and when it was logged, read by `confirm_pending`.
+- `last_caller_text`: the latest final caller transcript (§7.1) and when it was logged, read by `confirm_pending`. `session.log()` updates it whenever it writes a `transcript` event with `role: "caller"`, so every voice layer and the text evals keep it current without extra code.
 - `identified`: at most one patient, the one the call acts for (rule below).
 - `slots_offered`: every slot returned by `search_availability`, with its practitioner, start, end and treatment.
 - `appointments_seen`: every appointment returned by `list_appointments`.
@@ -306,6 +306,7 @@ The speech-to-speech model handled a toothache in FD-01 without ever mentioning 
 What happens, whichever trigger fires first:
 
 - `CallControl.play("emergency")`, then an `escalation` event (`reason` from §5.8, `urgency: emergency`, `trigger: triage | escalate | matcher`) and an `emergency` flag on the outcome.
+- **Reason for triage and matcher triggers:** trouble breathing → `red_flag_breathing`, swelling with fever → `red_flag_swelling_fever`, blow or accident → `red_flag_trauma`, bleeding that will not stop → `red_flag_bleeding`. When several flags fire at once, one `escalation` is logged with the first reason in that order, and the event's `red_flags[]` lists them all. The `escalate` trigger uses the reason the brain passed.
 - **Once per call.** Later triggers log `escalation` again with `repeat: true` but do not replay the clip. If the caller asks again what to do, the brain repeats the advice in its own words; the guarantee was the first playback.
 - The call goes on afterwards. The agent may take a message or book an urgency slot if the caller asks for one, but must not suggest that a dental appointment replaces emergency care. (Decision D3.)
 
@@ -416,11 +417,11 @@ The log is private: it holds transcripts and patient data. Only the console API 
 | `usage` | `service` `llm`\|`s2s`\|`stt`\|`tts`\|`brain`, `model`, token or character counts | Built (`brain`, `stt` to build) |
 | `brain_request` / `brain_reply` | `request`, `language` / `say`, `phrase`, `secs`, `error?` | To build |
 | `tool_call` / `tool_result` | `id`, `name`, `args` / `id`, `ok`, `result` or `error`, `message` | To build |
-| `staged` | `change` (`register`\|`book`\|`move`\|`cancel`), `details`, `operation_key` | To build |
+| `staged` | `change` (`register`\|`book`\|`register_book`\|`move`\|`cancel`), `details`, `operation_key` | To build |
 | `saved` | `change`, `operation_key`, `change_id`, `already_saved` | To build |
 | `discarded` | `change`, `operation_key`, `by` (`tool`\|`finish`\|`race`) | To build |
 | `triage` | the six answers, `red_flags[]` | To build |
-| `escalation` | `reason`, `urgency`, `trigger`, `repeat?` | To build |
+| `escalation` | `reason`, `urgency`, `trigger`, `red_flags?` (triage and matcher triggers), `repeat?` | To build |
 | `message_taken` | `message_id`, `urgent` | To build |
 | `phrase_played` | `phrase`, `language`, `secs` | To build |
 | `silence_guard_fired` | `turn`, `waited_secs`, `attempt` | To build |
@@ -514,16 +515,19 @@ CREATE TABLE review_links (token_sha256 TEXT PRIMARY KEY, call_id TEXT NOT NULL 
 
 **Operation keys.** Each staged change gets `operation_key = "<call_id>:<n>"`, where `n` counts the changes staged in the call (1, 2, ...). The key and the write go in one transaction. A second save with a key already in `changes` writes nothing and returns the first result. A move is one `UPDATE` of the appointment; a cancel sets `status = 'cancelled'`. Neither deletes rows.
 
+**Registration plus booking.** When `book` extends a staged registration (§5.3), the pending change becomes `register_book`: one pending change, one `operation_key`, and one `staged` event with `change: register_book` that replaces the earlier `staged` `register` (its `details` hold both the patient and the booking). Saving writes two `changes` rows in one transaction: `action = 'register'` with key `<call_id>:<n>/register`, and `action = 'book'` with key `<call_id>:<n>`. The idempotency check looks up `<call_id>:<n>`; a registration-only change uses `<call_id>:<n>` for its single `register` row. `saved` and `discarded` carry `change: register_book` and the key `<call_id>:<n>`.
+
 ---
 
 ## 11. Review link and public calls (CO-05)
 
 - **Before the call.** The page with the talk button (landing and Studio, CO-03) states, next to the button and before the microphone is requested, that the call is recorded and that the caller will talk to an AI, and how long the recording is kept (`REVIEW_LINK_DAYS`). The opening of the call says the same (`greeting`, §6.1). (Decision D10.)
-- When a call ends, the session creates a token with `secrets.token_urlsafe(32)` (256 random bits). The link is `/r/<token>` on the public call server.
+- **Which calls get a link.** Only calls on a public channel (`browser` today, `phone` in phase 2) get a review link, and every such call gets one. `bench` and `eval` calls never do, so the purge below never touches them.
+- When such a call ends, the session creates a token with `secrets.token_urlsafe(32)` (256 random bits). The link is `/r/<token>` on the public call server.
 - Only `sha256(token)` is stored (`review_links`), with an expiry of `REVIEW_LINK_DAYS` (default 7) days. The token itself is shown once, to the caller's browser, at hang-up. It never appears in the log.
 - The public route serves that one call's review: transcript, recording and tool steps, **redacted**: tool arguments and results show only the identified patient's own data; other patients returned by `find_patient` show as "another patient". (Decision D10.)
 - An unknown, expired or malformed token returns 404, the same response in each case. No public route lists calls or accepts a `call_id`.
-- **At expiry the data goes, not just the link.** For each expired `review_links` row, a purge (`scripts/purge_expired.py`, run hourly by a timer and once at call-server start-up, OP-02) deletes everything kept for that call: the call log `data/calls/<call_id>.jsonl`, `recordings/<call_id>.wav` and `.timing.json`, the call's `messages` rows, patients registered in that call (`created_by_call`) with their appointments, appointments created by that call (`created_by_call`), the `changes` rows of that call, and finally the `review_links` row. Moves and cancellations of seeded appointments hold no caller data and are undone by the nightly demo reset (OP-01). Each purge appends one line to `data/purge.log` with the `call_id`, the time and the counts deleted, and nothing else. The console loses the call at the same moment. Calls with no review link (bench, eval) are not touched. CO-05 tests that after the purge no file or row with that `call_id` remains.
+- **At expiry the data goes, not just the link.** For each expired `review_links` row, a purge (`scripts/purge_expired.py`, run hourly by a timer and once at call-server start-up, OP-02) deletes everything kept for that call: the call log `data/calls/<call_id>.jsonl`, `recordings/<call_id>.wav` and `.timing.json`, the call's `messages` rows, patients registered in that call (`created_by_call`) with their appointments, appointments created by that call (`created_by_call`), the `changes` rows of that call, and finally the `review_links` row. Moves and cancellations of seeded appointments hold no caller data and are undone by the nightly demo reset (OP-01). Each purge appends one line to `data/purge.log` with the `call_id`, the time and the counts deleted, and nothing else. The console loses the call at the same moment. Calls with no review link (`bench`, `eval`) are not touched. CO-05 tests that after the purge no file or row with that `call_id` remains.
 
 ---
 
@@ -555,6 +559,7 @@ expect:
   no_action_reason: null
   escalation: null      # or {reason: red_flag_breathing, urgency: emergency}
   phrases: []           # fixed phrases that must play, e.g. [emergency]
+  flags: []             # outcome flags that must be set (§8), e.g. [same_day_urgent]; others must not
   forbidden_tools: []   # e.g. [book] for an info-only call
 judge:                  # rubric items on top of the default ones
   - "Repeats the time slowly when asked"
@@ -583,7 +588,7 @@ All thirteen were decided by the human on 2026-11-08. This file already specifie
 
 | # | Topic | Status | Final decision | Where |
 |---|---|---|---|---|
-| D1 | Same-day slots | **Decided: changed** | Same-day slots only for `urgency`, at least `URGENCY_MIN_LEAD_MINUTES` (default 120) after the call clock's `now`; every other treatment still refuses same-day (`same_day`; too close is `too_soon`). Saved same-day urgency bookings are flagged for staff in the console. With no slot today, the agent takes an urgent callback with `take_message` | §5.3, §5.6, §7.6, §8, §10 |
+| D1 | Same-day slots | **Decided: changed** | Same-day slots only for `urgency`, at least `URGENCY_MIN_LEAD_MINUTES` (default 120) after the call clock's `now`; every other treatment still refuses same-day with `same_day`; an urgency slot today that starts less than the lead time ahead is refused with `too_soon`. Saved same-day urgency bookings are flagged for staff in the console. With no slot today, the agent takes an urgent callback with `take_message` | §5.3, §5.6, §7.6, §8, §10 |
 | D2 | What the red-flag transcript matcher does | **Decided: accepted with a change** | The matcher plays `emergency` itself, accepting false alarms; the phrase is conditional ("if you have trouble breathing... call 112"), in Spanish and English, so a false alarm does not sound absurd | §6.1, §6.2 |
 | D3 | Booking after an emergency referral | **Decided: accepted** | Allowed only if the caller asks; the agent must not imply it replaces emergency care | §6.2 |
 | D4 | Silence guard timeout | **Decided: accepted** | 5.0 s (`RESPONSE_TIMEOUT_SECS`) | §7.1, §7.6 |
