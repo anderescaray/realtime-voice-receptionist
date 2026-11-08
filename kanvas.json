@@ -122,6 +122,11 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Applied your decisions D1–D13 to contracts.md and PLAN.md. Section 14 now lists each one as decided with its final rule and where it lives.\n- Changed: D1 (same-day only for urgency, ≥120 min from the call clock, flagged for staff, urgent callback if no slot), D7 (name + date of birth only; caller ID moved to phase 2), D11 (confirm_pending refused with caller_said_no on a clear negative; word list in §5.9).\n- With changes: D2 (conditional emergency phrase), D5 (technical_close gives the clinic number and the 112 reminder; number rendered into the clip from site.phone at `make clips`, checked against a manifest), D10 (data deleted at expiry, recording/AI disclosure on the page and in a greeting clip, no free tier for public calls), D6, D13.\n- Two choices I made that you should check: the opening greeting is now a fixed clip played by code (so the disclosure never depends on a model), and the call starts in the page's language so an English visitor hears the disclosure in English."
+        },
+        {
+          "at": "2026-11-08T13:00:58Z",
+          "by": "cursor-reviewer",
+          "text": "Review of the decisions commit (git diff main...HEAD against PLAN.md and FD-02), read-only, 3 rounds in one session.\nFinal verdict: APPROVE.\n- Round 1: 10 findings (5 blocking, 5 minor), all fixed. Blocking: the wall-clock rule forbade the one allowed read in CallSession.start(); D1's summary mixed up same_day and too_soon; PLAN.md's confirm_pending still implied a yes check; it was unclear which calls get a review link (and so which are purged); registration plus booking had no defined operation keys or change rows.\n- Round 2: those 5 resolved; the fixes raised 2 blocking points (the saved event had room for only one change id; a log line was said to be \"replaced\" in an append-only log) and 1 minor naming mismatch, all fixed.\n- Round 3: all resolved, nothing new."
         }
       ]
     },
