@@ -127,6 +127,16 @@
           "at": "2026-11-08T13:00:58Z",
           "by": "cursor-reviewer",
           "text": "Review of the decisions commit (git diff main...HEAD against PLAN.md and FD-02), read-only, 3 rounds in one session.\nFinal verdict: APPROVE.\n- Round 1: 10 findings (5 blocking, 5 minor), all fixed. Blocking: the wall-clock rule forbade the one allowed read in CallSession.start(); D1's summary mixed up same_day and too_soon; PLAN.md's confirm_pending still implied a yes check; it was unclear which calls get a review link (and so which are purged); registration plus booking had no defined operation keys or change rows.\n- Round 2: those 5 resolved; the fixes raised 2 blocking points (the saved event had room for only one change id; a log line was said to be \"replaced\" in an append-only log) and 1 minor naming mismatch, all fixed.\n- Round 3: all resolved, nothing new."
+        },
+        {
+          "at": "2026-11-08T15:15:51Z",
+          "by": "cursor-reviewer",
+          "text": "Review of the D14-D24 commits only (git diff of the new commits), read-only, 2 rounds in one session.\nFinal verdict: APPROVE.\n- Round 1: 7 findings (4 blocking, 3 minor), all fixed. Blocking: one listed name pair (Marcello / Marcelo) did not match under the folding rules; an echo transcript after staging skipped the confirmation wait; the greeting still read the old single manifest path; dead-air prompts still reset on echo.\n- Round 2: all 7 resolved. 2 new minor points (the dead-air and guard lead-in sentences did not yet exclude echo), both fixed after the round."
+        },
+        {
+          "at": "2026-11-08T15:15:52Z",
+          "by": "foundation",
+          "text": "Applied your 11 changes as D14-D24 in contracts.md section 14, with PLAN.md updated where it conflicted. FD-02 stays in review.\nThings to check:\n- D16: too_many_matches is removed (find_patient now returns only a count when no one is identified). The new refusal is too_many_dob_attempts.\n- D16: name matching folds Spanish spellings (b/v, ll/y, silent h, z/s, ge/je...) but has no edit-distance tolerance, so a speech-to-text typo beyond those rules will not match.\n- D22: technical_close (clinic number and 112 reminder) can be cut off by the caller, as you asked; the call still ends.\n- D18: no clips generated yet. The Gemini set needs a paid generator run, which waits for your approval."
         }
       ]
     },
