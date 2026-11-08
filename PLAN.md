@@ -110,7 +110,7 @@ recordings/              # stereo WAV per call (git-ignored)
    - Database state afterwards: the right change, and nothing else.
    - The tool trace: confirmed before saving, no unoffered slot, a discarded change never saved, and a no-action reason from the list when nothing changed.
    - An LLM judge with a rubric: stayed in the caller's language, no medical advice, polite.
-4. **An audio run** of 10 scenarios through the real voice pipeline. The caller's lines are generated with text-to-speech, and the recorder's timing metrics give p50/p95 latency with the overlap rate beside it, dead air and how fast the agent stops when interrupted.
+4. **An audio run** of 10 scenarios through the real voice pipeline. The caller's lines are generated with text-to-speech, and the recorder's timing metrics give p50/p90 latency with the overlap rate beside it, dead air and how fast the agent stops when interrupted.
 5. **Cost:** `call_costs.py` over the eval runs, reported as cents per call.
 
 The README shows three tables: task success per scenario type, latency and audio metrics, and cost per call. For each one, show the first run and the run after the fix pass.
@@ -120,7 +120,7 @@ The README shows three tables: task success per scenario type, latency and audio
 | Part | Choice | Notes |
 |---|---|---|
 | Real-time audio | Pipecat (open source) | Handles WebRTC now and Twilio later |
-| Voice | A1: Gemini Live (speech to speech). A2: OpenAI GPT-Live-1 (speech to speech). B: Deepgram Flux, then Claude Haiku 5.5, then Kokoro on the host | Measured on day 1 (heard latency p50 1.5 s for A1, 2.5 s for B; about $0.027 and $0.008 per minute). Provisional: A1 primary, B fallback, until A2 is measured in the same harness |
+| Voice | A1: Gemini Live (speech to speech). A2: OpenAI GPT-Live-1 (speech to speech). B: Deepgram Flux, then Claude Haiku 5.5, then Kokoro on the host | Measured on day 1 (heard latency p50 1.5 s for A1, 2.5 s for B, overlap rate still to be measured in VO-06; about $0.027 and $0.008 per minute). Provisional: A1 primary, B fallback, until A2 is measured in the same harness |
 | Brain | Claude Haiku 5.5 | Calls the tools. Only short context is needed. In the cascade, the text model is the brain |
 | Database | SQLite (WAL) | Fine on one host. The "Scaling up" doc explains the move to Postgres |
 | Hosting | One small VPS (about €5/month) with Caddy for HTTPS | Voice sessions need a long-running process. Free hosting tiers fit poorly |
