@@ -91,7 +91,7 @@
     {
       "id": "FD-02",
       "title": "Write contracts.md",
-      "state": "review",
+      "state": "done",
       "group": "FD",
       "deps": ["FD-01"],
       "at": "2026-11-03T20:43:34Z",
@@ -205,6 +205,11 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D1/D7/D11): find_patient now takes name and dob (both required, no phone); same-day urgency slots allowed ≥ URGENCY_MIN_LEAD_MINUTES (new refusal too_soon); confirm_pending refuses with caller_said_no on a clear negative. This task must ship unit tests for the negatives list in app/negatives.py (contracts.md §5.9 lists the required cases)."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D14 (§5.2, §7.7): echo transcripts never count as a reply or a 'no' and don't update last_caller_text. D15 (§5.11): confirm_pending waits up to 1.0 s for a newer caller transcript. D16 (§5.3, §5.4, §5.10): find_patient returns data only for the one date-of-birth match, max 3 failed attempts, name folding in app/names.py with the listed test pairs. D17 (§5.12): read-back check in app/readback.py, logs only, with parser tests. D19 (§5.9): second 'no' discards the change, with tests."
         }
       ]
     },
@@ -222,6 +227,11 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D7/D6/D13): the prompt no longer includes caller-ID facts (caller ID is phase 2). The cascade uses this same brain prompt plus a spoken-reply block. The red-flag list must be validated by a licensed dentist before any real clinic uses it."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D13 and D20 (§6.2): red-flag lists in app/redflags.py, tuned on tests/redflags/tuning.yaml and measured on a holdout set never used for tuning; report recall and false-alarm rate; a licensed dentist must validate the list before real use. D14 (§7.7): the matcher also reads transcripts marked as echo."
         }
       ]
     },
@@ -239,6 +249,11 @@
           "at": "2026-11-08T12:55:06Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D6): the cascade must use the same brain prompt and tools_for_session/call_tool as the ask_clinic brain, with no fork (§4.3)."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D14 (§7.7, §8): echo check in app/voice/echo.py, logged as echo: true, with the unit tests listed in §7.7. D15 (§5.11): log transcript_missing, and measure when caller transcripts arrive relative to each ask_clinic call on every speech-to-speech layer. D18 (§6.1, §8): log the active voice_set in voice_config. D22 (§3.4): play() barge-in rules."
         }
       ]
     },
@@ -256,6 +271,11 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D2/D5/D10): new greeting clip with the recording + AI disclosure, played by code at connect; emergency phrase is now conditional; technical_close includes {clinic_phone} and the 112 reminder. Clips render placeholders from the site row and are checked against clips/manifest.json (§6.1)."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D22 changed on 2026-11-08: greeting, emergency and technical_close always play to the end; other clips stop on caller speech (§3.4). D18 (§6.1): one clip set per voice, make clips with a pluggable generator, manifest, start-up check, test against the seed; paid generators only with approval. D21 (§6.2): emergency at most twice per call. D14/D15 (§7.1, §7.4, §7.5, §7.7, §5.11): echo arms nothing; transcript_missing arms only the silence guard. Settings in §7.6."
         }
       ]
     },
@@ -277,7 +297,14 @@
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "Read-only FastAPI over the call logs, recordings and the diary: list calls, one call's events, audio file, appointments by day, overview counts, and calls flagged for provider quota. It runs as its own process, bound to localhost and never exposed to the internet. Staff reach it over an SSH tunnel."
+      "desc": "Read-only FastAPI over the call logs, recordings and the diary: list calls, one call's events, audio file, appointments by day, overview counts, and calls flagged for provider quota. It runs as its own process, bound to localhost and never exposed to the internet. Staff reach it over an SSH tunnel.",
+      "notes": [
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): serve the new events and flags from §8: echo on transcripts (D14), transcript_missing (D15), readback_mismatch (D17), voice_unresponsive (D5), and the audio_metrics fields in §9.3. Any latency figure the API returns comes with its overlap rate and count (D24, §13)."
+        }
+      ]
     },
     {
       "id": "CO-02",
@@ -293,6 +320,11 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D1): flag same-day urgent bookings and urgent callbacks for staff (outcome flags same_day_urgent, urgent_callback; 'needs staff today' filter)."
+        },
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): mark echo transcripts on the review page (D14, §7.7); show readback_mismatch on the call list and review page (D17, §5.12, §8); list voice_unresponsive calls (D5, §7.3). The overview's response gap follows §13: shown with overlap rate and count, never a median alone (D24)."
         }
       ]
     },
@@ -422,7 +454,14 @@
       "deps": ["EV-03", "VO-04", "OP-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "10 scenarios through the real voice pipeline with TTS-generated caller lines. Report p50/p95 latency, dead air and yield time from the recorder's metrics."
+      "desc": "10 scenarios through the real voice pipeline with TTS-generated caller lines. Report p50/p95 latency, dead air and yield time from the recorder's metrics.",
+      "notes": [
+        {
+          "at": "2026-11-08T15:45:24Z",
+          "by": "foundation",
+          "text": "Contract requirements (FD-02): D17 (§12, §13): check each scenario's read-back against the staged change (readback_mismatch) and flag invented dates, times, prices or names; these are reported only from this run. §13 and D24: every latency figure with overlap rate, count and unanswered turns, and say whether it is heard or server latency. Metrics come from audio_metrics (§9.3)."
+        }
+      ]
     },
     {
       "id": "LN-01",
