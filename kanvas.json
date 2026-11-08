@@ -112,6 +112,11 @@
           "at": "2026-11-08T12:17:36Z",
           "by": "foundation",
           "text": "contracts.md is at the repo root: the formats and rules every lane builds against. PLAN.md is updated where the voice test changed it.\n\nWhat it fixes in code, not in prompts:\n- No business rule depends on the active voice (VOICE= gemini, cascade, openai, none). Gemini is primary and cascade the fallback, both provisional until VO-05 measures GPT-Live-1. The code default stays cascade (D12).\n- 112 / emergency care: a fixed prerecorded phrase, triggered by the brain's triage, an emergency escalation or a red-flag check on the caller's transcript. Urgent pain needs triage before an urgency slot can be searched.\n- Silence guard: if the agent hasn't started answering 5 s after the caller's turn, the system plays \"Perdone, un segundo\" and asks the model to answer. A second failure in a row, or 4 in one call, ends the call politely and flags it. No instruction can turn the guard off. \"Be quiet\" followed by silence leads to \"¿Sigue ahí?\" prompts and a polite hang-up, never a mute call.\n- Metrics: every latency figure comes with its overlap rate and its turn count.\n- Also covered: clocks, tools and refusal codes, tables (overlaps refused by a DB trigger), JSONL events, the stereo recording on the call log's timeline, the review-link token, the eval scenario format.\n\nReview: one independent Cursor review in read-only mode (verdict note above). I applied 17 of its 18 findings. The 18th, partly applied, asked to switch the code default to gemini; I kept cascade because of Gemini's free-tier data terms and logged it as D12.\n\nPlease decide: section 14, \"Decisions for review\", D1 to D13. The ones that matter most:\n- D1: no same-day slots, even for urgent pain.\n- D2: the red-flag matcher plays 112 itself and accepts false alarms.\n- D5: end the call after two failed recoveries.\n- D7: what identifies a patient.\n- D9: added reasons and tools (record_triage, take_message).\n\nBranch feat/fd-02-contracts, not pushed."
+        },
+        {
+          "at": "2026-11-08T12:17:43Z",
+          "by": "foundation",
+          "text": "Correction to the summary: the partly applied finding is #6 (code default VOICE), not the 18th. All the others were applied."
         }
       ]
     },
