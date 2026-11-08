@@ -374,7 +374,7 @@ FD-01 measured three failures with Gemini Live: silences of 8 to 12 s after the 
 
 **It arms** when a final caller transcript arrives and the agent is not speaking at that moment. The deadline is `RESPONSE_TIMEOUT_SECS` (default 5.0 s) after the transcript arrives. It also arms on `transcript_missing` (§5.11), with the deadline counted from the end of the caller's speech.
 
-**It disarms** when any agent audio leaves the server (model speech or a fixed phrase), or when new caller speech starts. New caller speech re-arms it from the next final caller transcript. A caller turn with no agent audio before the next caller turn counts as **skipped** and is logged as such; the guard keeps running on the latest turn.
+**It disarms** when any agent audio leaves the server (model speech or a fixed phrase), or when new caller speech starts, except speech that may still be echo (§7.7). New caller speech re-arms it from the next final caller transcript. A caller turn with no agent audio before the next caller turn counts as **skipped** and is logged as such; the guard keeps running on the latest turn.
 
 **It is held** while `CallControl.busy()` is open (brain or tool working), and never fires while a busy scope is open. A brain request ends by itself at `BRAIN_TIMEOUT_SECS` (12 s) with `brain_unavailable`. `BUSY_MAX_SECS` (15 s) is a backstop for anything else: the plumbing cancels the work, the tool returns `store_unavailable` or the brain `brain_unavailable`, logs `busy_timeout`, and closes the scope. When the hold ends, the guard re-arms with a fresh deadline, so the answer the brain just produced has time to start before a recovery could talk over it.
 
@@ -398,7 +398,7 @@ The guard arms after every caller turn, including "cállate", "shut up" or "be q
 
 ### 7.4 Dead air after the agent spoke
 
-Separate from the response guard. When the agent's audio has ended and no caller transcript arrives for `IDLE_PROMPT_SECS` (default 10 s), and nothing is busy: play `still_there`. Up to `IDLE_PROMPT_MAX` (default 2) in a row; any caller transcript that is not echo (§7.7) resets the count. After the last one, another `IDLE_PROMPT_SECS` of silence → `end("idle_close")`.
+Separate from the response guard. When the agent's audio has ended and no non-echo caller transcript (§7.7) arrives for `IDLE_PROMPT_SECS` (default 10 s), and nothing is busy: play `still_there`. Up to `IDLE_PROMPT_MAX` (default 2) in a row; any caller transcript that is not echo (§7.7) resets the count. After the last one, another `IDLE_PROMPT_SECS` of silence → `end("idle_close")`.
 
 ### 7.5 Other endings
 
