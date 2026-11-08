@@ -91,12 +91,29 @@
     {
       "id": "FD-02",
       "title": "Write contracts.md",
-      "state": "todo",
+      "state": "review",
       "group": "FD",
       "deps": ["FD-01"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "The shared formats every lane builds against: database tables, tool schemas and their refusal rules, the voice-layer contract run_call(transport, session), the JSONL event types (including the provider quota flag), the eval scenario format, the fixed lists of no-action and escalation reasons, and the review-link token. It also defines the injectable clock: each call gets its own now when it starts, and the engine, session, prompt and tools read only that, never the wall clock. Changes after approval need a note on the board."
+      "desc": "The shared formats every lane builds against: database tables, tool schemas and their refusal rules, the voice-layer contract run_call(transport, session), the JSONL event types (including the provider quota flag), the eval scenario format, the fixed lists of no-action and escalation reasons, and the review-link token. It also defines the injectable clock: each call gets its own now when it starts, and the engine, session, prompt and tools read only that, never the wall clock. Changes after approval need a note on the board.",
+      "notes": [
+        {
+          "at": "2026-11-08T12:10:18Z",
+          "by": "foundation",
+          "text": "Plan: write contracts.md at the repo root from PLAN.md and what FD-01 actually built (app/voice/): clocks, voice-layer contract and brain hand-off, fixed phrases played by code (emergency, silence recovery, quota), silence guard, tools and refusal rules, database tables, JSONL events, recording format, metrics (latency always with overlap rate), eval scenario format, closed reason lists and the review-link token. Update PLAN.md where FD-01 changed it. Open product and safety choices get a default and go in a final 'Decisions for review' section. Then one independent read-only review, apply what I agree with."
+        },
+        {
+          "at": "2026-11-08T12:17:36Z",
+          "by": "cursor-reviewer",
+          "text": "Review of contracts.md and the PLAN.md edits (git diff main...HEAD), read-only.\nVerdict: REQUEST CHANGES. The document is strong on the voice-test results and on structure, but several tool and session rules contradicted each other or the code and would mislead implementers.\n18 findings: 5 high (registering and booking a new patient broke the one-pending-change rule; tools could act for a patient other than the identified one; the fallback reason order mislabelled message calls; the silence guard could fire over busy work; the FD-01 latency figures had no overlap rate), 10 medium, 3 low."
+        },
+        {
+          "at": "2026-11-08T12:17:36Z",
+          "by": "foundation",
+          "text": "contracts.md is at the repo root: the formats and rules every lane builds against. PLAN.md is updated where the voice test changed it.\n\nWhat it fixes in code, not in prompts:\n- No business rule depends on the active voice (VOICE= gemini, cascade, openai, none). Gemini is primary and cascade the fallback, both provisional until VO-05 measures GPT-Live-1. The code default stays cascade (D12).\n- 112 / emergency care: a fixed prerecorded phrase, triggered by the brain's triage, an emergency escalation or a red-flag check on the caller's transcript. Urgent pain needs triage before an urgency slot can be searched.\n- Silence guard: if the agent hasn't started answering 5 s after the caller's turn, the system plays \"Perdone, un segundo\" and asks the model to answer. A second failure in a row, or 4 in one call, ends the call politely and flags it. No instruction can turn the guard off. \"Be quiet\" followed by silence leads to \"¿Sigue ahí?\" prompts and a polite hang-up, never a mute call.\n- Metrics: every latency figure comes with its overlap rate and its turn count.\n- Also covered: clocks, tools and refusal codes, tables (overlaps refused by a DB trigger), JSONL events, the stereo recording on the call log's timeline, the review-link token, the eval scenario format.\n\nReview: one independent Cursor review in read-only mode (verdict note above). I applied 17 of its 18 findings. The 18th, partly applied, asked to switch the code default to gemini; I kept cascade because of Gemini's free-tier data terms and logged it as D12.\n\nPlease decide: section 14, \"Decisions for review\", D1 to D13. The ones that matter most:\n- D1: no same-day slots, even for urgent pain.\n- D2: the red-flag matcher plays 112 itself and accepts false alarms.\n- D5: end the call after two failed recoveries.\n- D7: what identifies a patient.\n- D9: added reasons and tools (record_triage, take_message).\n\nBranch feat/fd-02-contracts, not pushed."
+        }
+      ]
     },
     {
       "id": "EN-01",
