@@ -35,7 +35,7 @@
     {
       "id": "FD-01",
       "title": "Voice test: Spanish browser call",
-      "state": "review",
+      "state": "done",
       "group": "FD",
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
@@ -327,6 +327,34 @@
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
       "desc": "A 60-second video of a real call followed by its review in the console, then posts on LinkedIn and X, and a Show HN."
+    },
+    {
+      "id": "VO-05",
+      "title": "Measure GPT-Live-1 (A2) and make the final voice decision",
+      "state": "proposed",
+      "group": "VO",
+      "deps": ["VO-02"],
+      "at": "2026-11-08T11:56:38Z",
+      "by": "foundation",
+      "desc": "Once the brain and tools work, run voice_bench.py against GPT-Live-1 (A2), capped at 5 USD of spend, and compare it with Gemini (A1) and the cascade (B) on heard latency, greeting time, replies over 3 s, overlap rate and USD per minute. Done when the numbers are on the board and the primary and fallback voice layers are decided (today: Gemini primary, cascade fallback, provisional)."
+    },
+    {
+      "id": "VO-06",
+      "title": "Report overlap rate next to latency; investigate overlaps and barge-in",
+      "state": "proposed",
+      "group": "VO",
+      "at": "2026-11-08T11:56:38Z",
+      "by": "foundation",
+      "desc": "The latency median leaves out turns where caller and agent overlap, so on speakers it can look better than the call felt (4 of 8 turns overlapped in the Gemini browser test). Show the overlap rate beside p50/p90 in the bench report and in the browser call summary. Then find out why overlaps happen and how barge-in behaves, including speaker echo being heard as caller speech in browser calls. Done when both reports show the overlap rate and the causes are written up with a proposed fix."
+    },
+    {
+      "id": "VO-07",
+      "title": "Cascade latency improvements",
+      "state": "proposed",
+      "group": "VO",
+      "at": "2026-11-08T11:56:38Z",
+      "by": "foundation",
+      "desc": "Bring the cascade (B) closer to Gemini's heard latency (p50 2490 ms vs 1490 ms today): Flux eager end-of-turn mode, a short first sentence so speech starts sooner, and opening the Deepgram connection before the call needs it. Also evaluate a streaming cloud TTS to replace the robotic Kokoro voice, but ask before spending money on it. Done when the bench shows the new cascade numbers next to the old ones."
     }
   ]
 }
