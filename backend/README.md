@@ -2,6 +2,12 @@
 
 Call server, voice layers and (later) the clinic engine. Python 3.12, managed with `uv`.
 
+## Seed the clinic
+
+`make seed` deletes and rebuilds `data/clinic.db` from the static catalogue (default
+anchor Monday `2026-11-16`). Use `make seed ANCHOR=YYYY-MM-DD` to shift the diary and
+absences to another Monday. Every patient and phone number in the seed is synthetic.
+
 ## Talk to it from a browser
 
 ```bash
