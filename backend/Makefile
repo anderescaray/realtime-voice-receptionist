@@ -1,4 +1,4 @@
-.PHONY: run test lint verify costs
+.PHONY: run test lint verify costs seed
 
 run:     ## start the call server on :7860
 	uv run python -m app.server
@@ -12,6 +12,9 @@ lint:
 	uv run ruff format --check .
 
 verify: lint test
+
+seed:    ## rebuild data/clinic.db from the static catalogue
+	uv run python -m seed.build $(if $(ANCHOR),--anchor $(ANCHOR),)
 
 costs:   ## cost and latency per call from data/calls/
 	uv run python -m scripts.call_costs
