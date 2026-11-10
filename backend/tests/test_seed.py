@@ -521,6 +521,9 @@ def test_validate_import_independence() -> None:
             mod = node.module
             if mod in forbidden or any(mod.startswith(f + ".") for f in forbidden):
                 pytest.fail(f"forbidden import in validate.py: {mod}")
+            for alias in node.names:
+                if f"{mod}.{alias.name}" in forbidden:
+                    pytest.fail(f"forbidden import in validate.py: {mod}.{alias.name}")
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name in forbidden:
@@ -612,3 +615,18 @@ def test_fully_booked_fixture_is_bookable_future_day(tmp_path: Path) -> None:
         raw = conn.execute("SELECT value FROM meta WHERE key = 'fixtures'").fetchone()[0]
     fixture_day = parse_local_date(json.loads(raw)["fully_booked"]["date"])
     assert (fixture_day - anchor).days >= 2
+
+
+def test_fully_booked_fixture_has_a_treatment_mix(tmp_path: Path) -> None:
+    db = tmp_path / "mix.db"
+    assert build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED) == []
+    with sqlite3.connect(db) as conn:
+        fb = json.loads(conn.execute("SELECT value FROM meta WHERE key = 'fixtures'").fetchone()[0])
+        rows = conn.execute(
+            "SELECT treatment_id, COUNT(*) FROM appointments WHERE practitioner_id = ? "
+            "AND status = 'booked' AND start_utc LIKE ? GROUP BY treatment_id",
+            (fb["fully_booked"]["practitioner_id"], fb["fully_booked"]["date"] + "%"),
+        ).fetchall()
+    counts = dict(rows)
+    assert len(counts) >= 3
+    assert max(counts.values()) <= sum(counts.values()) // 2

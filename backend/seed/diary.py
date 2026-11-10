@@ -116,48 +116,44 @@ def _pick_fully_booked_day(
     return None
 
 
+# Fixed mix for the fully booked fixture day: mostly check-ups and fillings.
+_FIXTURE_ROTATION = ("checkup", "filling", "cleaning", "checkup", "extraction", "filling")
+
+
+def _hhmm_to_minutes(hhmm: str) -> int:
+    h, m = (int(x) for x in hhmm.split(":"))
+    return h * 60 + m
+
+
 def _tile_full_day(
     pid: str,
     d: date,
     hours: dict,
     allowed: list[str],
 ) -> list[tuple[str, str]]:
-    """Cover every 15-minute cell with treatments the practitioner performs."""
-    wd = d.weekday()
-    fixture_treatments = [t for t in sorted(allowed) if t != "urgency"]
+    """Cover every 15-minute cell of the day with a realistic mix of treatments.
+
+    Walks a fixed rotation and takes the first treatment that leaves either nothing
+    or at least 30 minutes of the shift, so no uncoverable 15-minute gap remains.
+    """
+    rotation = [t for t in _FIXTURE_ROTATION if t in allowed]
     plan: list[tuple[str, str]] = []
-    for seg_start, seg_end in hours[pid].get(wd, []):
-        slots = quarter_hours_between(seg_start, seg_end)
-        covered: set[str] = set()
-        idx = 0
-        while idx < len(slots):
-            if slots[idx] in covered:
-                idx += 1
-                continue
-            start = slots[idx]
-            placed = False
-            for tid in sorted(
-                fixture_treatments, key=lambda t: (-catalogue.TREATMENT_MINUTES[t], t)
-            ):
+    turn = 0
+    for seg_start, seg_end in hours[pid].get(d.weekday(), []):
+        cursor = _hhmm_to_minutes(seg_start)
+        end = _hhmm_to_minutes(seg_end)
+        while cursor < end:
+            left = end - cursor
+            for step in range(len(rotation)):
+                tid = rotation[(turn + step) % len(rotation)]
                 mins = catalogue.TREATMENT_MINUTES[tid]
-                end_dt = add_minutes_local(d, start, mins)
-                end_hhmm = f"{end_dt.hour:02d}:{end_dt.minute:02d}"
-                if not (seg_start <= start and end_hhmm <= seg_end):
-                    continue
-                span = quarter_hours_between(start, end_hhmm)
-                if all(s in slots and s not in covered for s in span):
-                    plan.append((start, tid))
-                    covered.update(span)
-                    placed = True
+                if mins == left or left - mins >= 30:
                     break
-            if not placed:
-                tid = "checkup"
-                mins = catalogue.TREATMENT_MINUTES[tid]
-                end_dt = add_minutes_local(d, start, mins)
-                end_hhmm = f"{end_dt.hour:02d}:{end_dt.minute:02d}"
-                plan.append((start, tid))
-                covered.update(quarter_hours_between(start, end_hhmm))
-            idx += 1
+            else:
+                raise ValueError(f"cannot tile {left} minutes for {pid} on {d}")
+            plan.append((f"{cursor // 60:02d}:{cursor % 60:02d}", tid))
+            cursor += mins
+            turn += step + 1
     return plan
 
 
