@@ -143,7 +143,7 @@
     {
       "id": "EN-01",
       "title": "Catalogue and seed",
-      "state": "todo",
+      "state": "done",
       "group": "EN",
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
@@ -154,6 +154,31 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D5): the seeded site.phone is spoken in the technical_close clip, so it must be a number that cannot reach a real person or business."
+        },
+        {
+          "at": "2026-11-10T20:08:13Z",
+          "by": "engine",
+          "text": "Plan: schema per contracts §10 (incl. overlap triggers) in backend/engine/schema.sql; catalogue (1 site, 4 dentists + 1 hygienist, hours, closures, anchor-relative absences, 6 treatments with durations/prices/who) and a deterministic generator for ~300 synthetic patients and a 4-week diary in backend/seed/; independent validation pass; make seed with fixed default anchor; test that two builds are identical. Code written by a Cursor worker (composer-2.5), reviewed here, then independent review."
+        },
+        {
+          "at": "2026-11-10T20:10:29Z",
+          "by": "engine",
+          "text": "Question: site.phone: Spain has no range officially reserved for fiction that I can verify. Options: (A) UK Ofcom drama range +44 20 7946 0000-0999 (officially reserved; needs a small contracts.md §6.1 change, since spoken_phone assumes a Spanish 9-digit number); (B) US NANPA fiction range +1 202 555 0100-0199 (same contract change); (C) a Spanish-format number in an unassigned block (can't guarantee it stays unassigned). Patient phones would use the same range. Which one?"
+        },
+        {
+          "at": "2026-11-10T20:13:49Z",
+          "by": "engine",
+          "text": "Human decision: site.phone and all patient phones use the Ofcom drama range +44 20 7946 0000-0999 (Spain has no reserved fiction range), behind one constant in seed/phones.py. Approved additive change to contracts.md §6.1: spoken_phone reads a non-Spanish number with its country code. Affects the voice lane (clips, spoken_phone in app/clinic.py). README backlog line: the demo uses a UK drama number because Spain has no reserved fiction range."
+        },
+        {
+          "at": "2026-11-10T20:26:55Z",
+          "by": "cursor-reviewer",
+          "text": "Independent review (gpt-5.6-sol-high, ask mode, clean git-archive copy, 3 rounds in one chat). R1: 4 blocking + 4 minor. Accepted and fixed: fully-booked fixture on a closure, validator importing the catalogue, validator crash on missing meta; minors site check, isolated trigger tests, DST tests. Rejected: 'contracted ID formats' (contracts.md defines none). Deferred: schema-introspection tests. R2: 1 blocking (fixture day was 9 extractions) + 1 minor (ast import test gap), both fixed. R3: VERDICT APPROVE."
+        },
+        {
+          "at": "2026-11-10T20:27:08Z",
+          "by": "engine",
+          "text": "Done on branch feat/en-01-catalogue-seed (3 commits, not pushed). make seed builds data/clinic.db: 1 site, 4 dentists + 1 hygienist, hours (split shift, Saturday), 2026-27 fixed-date holidays, anchor-relative absences, 6 treatments with durations/prices/who, 300 synthetic patients, a 4-week diary falling from ~70% to ~20% occupancy plus 2 weeks of history (5% cancelled, urgency only in history). Default anchor Monday 2026-11-16; make seed ANCHOR=YYYY-MM-DD shifts it. Eval fixtures in meta.fixtures: namesakes, same first surname, accented compound surname, one dentist fully booked one day. schema.sql has the §10 overlap triggers. Independent validator runs on every build. Phones in the Ofcom drama range (D25, contracts §6.1 note). 47 tests, incl. byte-identical builds across processes. To check: realism of names/hours; whether deploy should seed with ANCHOR=today."
         }
       ]
     },
@@ -433,6 +458,11 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D10): launch requirement: no provider a public call reaches may be on a free tier whose terms let it use call data; record plan and terms per provider. Also runs the hourly purge timer (§11)."
+        },
+        {
+          "at": "2026-11-10T20:35:43Z",
+          "by": "engine",
+          "text": "Deploy must run 'make seed ANCHOR=<this Monday>' so the live diary is current; evals keep the fixed anchor 2026-11-16 (from EN-01 pilot)."
         }
       ]
     },
@@ -481,7 +511,14 @@
       "deps": ["LN-01", "EV-04", "OP-03", "CO-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "Pitch, live link and console screenshot at the top; architecture diagram; the three results tables; cost per call; what the demo does not do; a Scaling up section; link to the Kanvas export."
+      "desc": "Pitch, live link and console screenshot at the top; architecture diagram; the three results tables; cost per call; what the demo does not do; a Scaling up section; link to the Kanvas export.",
+      "notes": [
+        {
+          "at": "2026-11-10T20:15:06Z",
+          "by": "engine",
+          "text": "README backlog (from EN-01): say the demo clinic and patients use a UK drama phone number (Ofcom range +44 20 7946 0xxx) because Spain has no range reserved for fiction."
+        }
+      ]
     },
     {
       "id": "LN-03",
