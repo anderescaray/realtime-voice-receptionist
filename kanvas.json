@@ -160,7 +160,7 @@
     {
       "id": "EN-02",
       "title": "Slot engine with reasons",
-      "state": "proposed",
+      "state": "todo",
       "group": "EN",
       "deps": ["EN-01"],
       "at": "2026-11-03T20:43:34Z",
@@ -177,7 +177,7 @@
     {
       "id": "EN-03",
       "title": "Store: staging, operation keys, no overlaps",
-      "state": "proposed",
+      "state": "todo",
       "group": "EN",
       "deps": ["EN-01"],
       "at": "2026-11-03T20:43:34Z",
@@ -194,7 +194,7 @@
     {
       "id": "EN-04",
       "title": "Tools and call session",
-      "state": "proposed",
+      "state": "todo",
       "group": "EN",
       "deps": ["EN-02", "EN-03"],
       "at": "2026-11-03T20:43:34Z",
@@ -216,7 +216,7 @@
     {
       "id": "VO-01",
       "title": "Per-call prompt",
-      "state": "proposed",
+      "state": "todo",
       "group": "VO",
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
@@ -292,7 +292,7 @@
     {
       "id": "CO-01",
       "title": "Console API",
-      "state": "proposed",
+      "state": "todo",
       "group": "CO",
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
@@ -331,7 +331,7 @@
     {
       "id": "CO-03",
       "title": "Studio and landing page",
-      "state": "proposed",
+      "state": "todo",
       "group": "CO",
       "deps": ["CO-01"],
       "at": "2026-11-03T20:43:34Z",
@@ -506,7 +506,7 @@
     {
       "id": "VO-06",
       "title": "Report overlap rate next to latency; investigate overlaps and barge-in",
-      "state": "proposed",
+      "state": "todo",
       "group": "VO",
       "at": "2026-11-08T11:56:38Z",
       "by": "foundation",
