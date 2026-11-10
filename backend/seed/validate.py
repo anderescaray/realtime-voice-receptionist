@@ -10,7 +10,7 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-from seed import catalogue, phones
+from seed import phones
 from seed.timeutil import (
     MADRID,
     parse_local_date,
@@ -30,7 +30,17 @@ REQUIRED_META = frozenset(
     }
 )
 
-CLOSED_TREATMENTS = frozenset(catalogue.TREATMENT_IDS)
+CLOSED_TREATMENTS = frozenset(
+    {
+        "checkup",
+        "cleaning",
+        "extraction",
+        "filling",
+        "ortho_consult",
+        "urgency",
+    }
+)
+
 UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
@@ -38,11 +48,25 @@ def _load_meta(conn: sqlite3.Connection) -> dict[str, str]:
     return dict(conn.execute("SELECT key, value FROM meta").fetchall())
 
 
-def _parse_fixtures(raw: str) -> dict:
+def _parse_fixtures(raw: str | None) -> tuple[dict, str | None]:
+    if raw is None:
+        return {}, "meta fixtures missing"
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
     except json.JSONDecodeError:
-        return {}
+        return {}, "meta fixtures: invalid JSON"
+    if not isinstance(data, dict):
+        return {}, "meta fixtures: expected JSON object"
+    return data, None
+
+
+def _parse_meta_date(meta: dict[str, str], key: str) -> tuple[date | None, str | None]:
+    if key not in meta:
+        return None, f"meta missing key: {key}"
+    try:
+        return parse_local_date(meta[key]), None
+    except (ValueError, TypeError):
+        return None, f"meta {key} unparsable: {meta[key]!r}"
 
 
 def _practitioner_on_absence(
@@ -77,7 +101,12 @@ def occupancy(db_path: str | Path) -> dict[str, dict[str, float]]:
     conn.row_factory = sqlite3.Row
     try:
         meta = _load_meta(conn)
-        anchor = parse_local_date(meta["diary_start"])
+        anchor, err = _parse_meta_date(meta, "diary_start")
+        if anchor is None:
+            if err:
+                raise ValueError(err)
+            raise ValueError("diary_start missing")
+
         history_start = anchor - timedelta(days=14)
 
         hours: dict[str, dict[int, list[tuple[str, str]]]] = defaultdict(lambda: defaultdict(list))
@@ -160,6 +189,11 @@ def validate(db_path: str | Path) -> list[str]:
 
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    diary_start: date | None = None
+    diary_end: date | None = None
+    fixtures: dict = {}
+    fixtures_ok = True
+    diary_bounds_ok = False
     try:
         meta = _load_meta(conn)
         for key in sorted(REQUIRED_META):
@@ -169,10 +203,27 @@ def validate(db_path: str | Path) -> list[str]:
         if meta.get("seed_version") != "1":
             errors.append(f"unexpected seed_version: {meta.get('seed_version')!r}")
 
-        fixtures = _parse_fixtures(meta.get("fixtures", "{}"))
-        for fix_key in ("namesakes", "same_first_surname", "accented", "fully_booked"):
-            if fix_key not in fixtures:
-                errors.append(f"fixtures missing key: {fix_key}")
+        if "seed_anchor" in meta:
+            _, anchor_err = _parse_meta_date(meta, "seed_anchor")
+            if anchor_err and anchor_err.startswith("meta seed_anchor unparsable"):
+                errors.append(anchor_err)
+
+        fixtures, fix_err = _parse_fixtures(meta.get("fixtures"))
+        if fix_err:
+            errors.append(fix_err)
+            fixtures_ok = False
+        elif "fixtures" in meta:
+            for fix_key in ("namesakes", "same_first_surname", "accented", "fully_booked"):
+                if fix_key not in fixtures:
+                    errors.append(f"fixtures missing key: {fix_key}")
+
+        diary_start, ds_err = _parse_meta_date(meta, "diary_start")
+        if ds_err:
+            errors.append(ds_err)
+        diary_end, de_err = _parse_meta_date(meta, "diary_end")
+        if de_err:
+            errors.append(de_err)
+        diary_bounds_ok = diary_start is not None and diary_end is not None
 
         practitioners = conn.execute(
             "SELECT * FROM practitioners ORDER BY practitioner_id"
@@ -227,43 +278,49 @@ def validate(db_path: str | Path) -> list[str]:
             if not phones.is_fictional(row["phone"]):
                 errors.append(f"patient {row['patient_id']}: non-fictional phone")
 
-        site = conn.execute("SELECT phone FROM site LIMIT 1").fetchone()
-        if site and not phones.is_fictional(site["phone"]):
-            errors.append("site phone is not fictional")
-
-        # namesake fixtures
-        ns_ids = fixtures.get("namesakes", [])
-        if len(ns_ids) == 2:
-            a, b = (patients.get(ns_ids[0]), patients.get(ns_ids[1]))
-            if a and b:
-                if not (
-                    a["first_name"] == b["first_name"]
-                    and a["last_name1"] == b["last_name1"]
-                    and a["last_name2"] == b["last_name2"]
-                    and a["dob"] != b["dob"]
-                ):
-                    errors.append("namesake fixtures do not match expected shape")
-            else:
-                errors.append("namesake fixture patients missing")
+        site_rows = conn.execute("SELECT site_id, phone, timezone FROM site").fetchall()
+        if len(site_rows) != 1:
+            errors.append(f"expected exactly 1 site row, found {len(site_rows)}")
         else:
-            errors.append("namesakes fixture must list two patient ids")
+            site = site_rows[0]
+            if site["timezone"] != "Europe/Madrid":
+                errors.append(f"site timezone must be Europe/Madrid, got {site['timezone']!r}")
+            if not phones.is_fictional(site["phone"]):
+                errors.append("site phone is not fictional")
 
-        sfs_ids = fixtures.get("same_first_surname", [])
-        if len(sfs_ids) == 2:
-            a, b = (patients.get(sfs_ids[0]), patients.get(sfs_ids[1]))
-            if a and b:
-                if not (
-                    a["first_name"] == b["first_name"]
-                    and a["last_name1"] == b["last_name1"]
-                    and a["last_name2"] != b["last_name2"]
-                ):
-                    errors.append("same_first_surname fixtures invalid")
+        if fixtures_ok:
+            ns_ids = fixtures.get("namesakes", [])
+            if len(ns_ids) == 2:
+                a, b = (patients.get(ns_ids[0]), patients.get(ns_ids[1]))
+                if a and b:
+                    if not (
+                        a["first_name"] == b["first_name"]
+                        and a["last_name1"] == b["last_name1"]
+                        and a["last_name2"] == b["last_name2"]
+                        and a["dob"] != b["dob"]
+                    ):
+                        errors.append("namesake fixtures do not match expected shape")
+                else:
+                    errors.append("namesake fixture patients missing")
             else:
-                errors.append("same_first_surname patients missing")
+                errors.append("namesakes fixture must list two patient ids")
 
-        acc_id = fixtures.get("accented")
-        if acc_id and acc_id not in patients:
-            errors.append("accented fixture patient missing")
+            sfs_ids = fixtures.get("same_first_surname", [])
+            if len(sfs_ids) == 2:
+                a, b = (patients.get(sfs_ids[0]), patients.get(sfs_ids[1]))
+                if a and b:
+                    if not (
+                        a["first_name"] == b["first_name"]
+                        and a["last_name1"] == b["last_name1"]
+                        and a["last_name2"] != b["last_name2"]
+                    ):
+                        errors.append("same_first_surname fixtures invalid")
+                else:
+                    errors.append("same_first_surname patients missing")
+
+            acc_id = fixtures.get("accented")
+            if acc_id and acc_id not in patients:
+                errors.append("accented fixture patient missing")
 
         booked = conn.execute(
             "SELECT * FROM appointments WHERE status = 'booked' ORDER BY start_utc"
@@ -341,88 +398,96 @@ def validate(db_path: str | Path) -> list[str]:
                 pr_booked[pid].append((start_u, end_u))
                 pt_booked[pat].append((start_u, end_u))
 
-        fb = fixtures.get("fully_booked", {})
-        fb_pid = fb.get("practitioner_id")
-        fb_date = fb.get("date")
-        if fb_pid and fb_date:
-            d = parse_local_date(fb_date)
-            if fb_date in closures:
-                errors.append("fully_booked day is a closure")
-            day_slots = []
-            for seg_start, seg_end in hours[fb_pid].get(weekday_local(d), []):
-                day_slots.extend(quarter_hours_between(seg_start, seg_end))
-            busy_cells: set[str] = set()
-            for row in booked:
-                if row["practitioner_id"] != fb_pid:
-                    continue
-                start_dt = datetime.strptime(row["start_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(
-                    tzinfo=UTC
-                )
-                end_dt = datetime.strptime(row["end_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-                loc_s = start_dt.astimezone(MADRID)
-                loc_e = end_dt.astimezone(MADRID)
-                if loc_s.date() != d:
-                    continue
-                h0, m0 = loc_s.hour, loc_s.minute
-                h1, m1 = loc_e.hour, loc_e.minute
-                t0 = h0 * 60 + m0
-                t1 = h1 * 60 + m1
-                for t in range(t0, t1, 15):
-                    busy_cells.add(f"{t // 60:02d}:{t % 60:02d}")
-            free = [s for s in day_slots if s not in busy_cells]
-            if free:
-                errors.append(
-                    f"fully_booked fixture: free cells remain on {fb_date} for {fb_pid}: {free[:3]}"
-                )
+        if fixtures_ok:
+            fb = fixtures.get("fully_booked", {})
+            fb_pid = fb.get("practitioner_id")
+            fb_date = fb.get("date")
+            if fb_pid and fb_date:
+                d = parse_local_date(fb_date)
+                if fb_date in closures:
+                    errors.append("fully_booked day is a closure")
+                day_slots = []
+                for seg_start, seg_end in hours[fb_pid].get(weekday_local(d), []):
+                    day_slots.extend(quarter_hours_between(seg_start, seg_end))
+                busy_cells: set[str] = set()
+                for row in booked:
+                    if row["practitioner_id"] != fb_pid:
+                        continue
+                    start_dt = datetime.strptime(row["start_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                        tzinfo=UTC
+                    )
+                    end_dt = datetime.strptime(row["end_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                        tzinfo=UTC
+                    )
+                    loc_s = start_dt.astimezone(MADRID)
+                    loc_e = end_dt.astimezone(MADRID)
+                    if loc_s.date() != d:
+                        continue
+                    h0, m0 = loc_s.hour, loc_s.minute
+                    h1, m1 = loc_e.hour, loc_e.minute
+                    t0 = h0 * 60 + m0
+                    t1 = h1 * 60 + m1
+                    for t in range(t0, t1, 15):
+                        busy_cells.add(f"{t // 60:02d}:{t % 60:02d}")
+                free = [s for s in day_slots if s not in busy_cells]
+                if free:
+                    errors.append(
+                        f"fully_booked fixture: free cells remain on {fb_date} for {fb_pid}:"
+                        f" {free[:3]}"
+                    )
 
         for table in ("changes", "messages", "review_links"):
             n = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             if n != 0:
                 errors.append(f"{table} must be empty after seed, found {n}")
 
-        diary_start = parse_local_date(meta["diary_start"])
-        diary_end = parse_local_date(meta["diary_end"])
+        if diary_bounds_ok:
+            total_appts = len(all_appts)
+            if total_appts:
+                n_cancel = sum(1 for r in all_appts if r["status"] == "cancelled")
+                share = n_cancel / total_appts
+                if share < 0.03 or share > 0.08:
+                    errors.append(f"cancelled share {share:.3f} outside 3-8%")
 
-        total_appts = len(all_appts)
-        if total_appts:
-            n_cancel = sum(1 for r in all_appts if r["status"] == "cancelled")
-            share = n_cancel / total_appts
-            if share < 0.03 or share > 0.08:
-                errors.append(f"cancelled share {share:.3f} outside 3-8%")
+            assert diary_start is not None
+            for row in all_appts:
+                if row["treatment_id"] != "urgency":
+                    continue
+                start_u = row["start_utc"]
+                try:
+                    start_dt = datetime.strptime(start_u, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+                except ValueError:
+                    continue
+                loc_d = start_dt.astimezone(MADRID).date()
+                if loc_d >= diary_start:
+                    errors.append(f"{row['appointment_id']}: urgency on or after diary_start")
 
-        for row in all_appts:
-            if row["treatment_id"] != "urgency":
-                continue
-            start_u = row["start_utc"]
-            try:
-                start_dt = datetime.strptime(start_u, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-            except ValueError:
-                continue
-            loc_d = start_dt.astimezone(MADRID).date()
-            if loc_d >= diary_start:
-                errors.append(f"{row['appointment_id']}: urgency on or after diary_start")
-
-        for row in booked:
-            end_dt = datetime.strptime(row["end_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-            loc_start = (
-                datetime.strptime(row["start_utc"], "%Y-%m-%dT%H:%M:%SZ")
-                .replace(tzinfo=UTC)
-                .astimezone(MADRID)
-            )
-            if loc_start.date() >= diary_start:
-                loc_end_d = end_dt.astimezone(MADRID).date()
-                if loc_end_d > diary_end:
-                    errors.append(
-                        f"{row['appointment_id']}: future appointment ends after diary_end"
-                    )
-
-        occ = occupancy(path)
-        for pid, buckets in occ.items():
-            if buckets.get("week1", 0) <= buckets.get("week4", 0):
-                errors.append(
-                    f"{pid}: week1 occupancy {buckets.get('week1', 0):.3f}"
-                    f" not greater than week4 {buckets.get('week4', 0):.3f}"
+            assert diary_end is not None
+            for row in booked:
+                end_dt = datetime.strptime(row["end_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+                loc_start = (
+                    datetime.strptime(row["start_utc"], "%Y-%m-%dT%H:%M:%SZ")
+                    .replace(tzinfo=UTC)
+                    .astimezone(MADRID)
                 )
+                if loc_start.date() >= diary_start:
+                    loc_end_d = end_dt.astimezone(MADRID).date()
+                    if loc_end_d > diary_end:
+                        errors.append(
+                            f"{row['appointment_id']}: future appointment ends after diary_end"
+                        )
+
+            try:
+                occ = occupancy(path)
+            except ValueError as exc:
+                errors.append(str(exc))
+            else:
+                for pid, buckets in occ.items():
+                    if buckets.get("week1", 0) <= buckets.get("week4", 0):
+                        errors.append(
+                            f"{pid}: week1 occupancy {buckets.get('week1', 0):.3f}"
+                            f" not greater than week4 {buckets.get('week4', 0):.3f}"
+                        )
 
     finally:
         conn.close()

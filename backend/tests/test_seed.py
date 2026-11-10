@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import json
 import os
 import shutil
 import sqlite3
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from seed.build import DEFAULT_ANCHOR, DEFAULT_SEED, build_db
 from seed.catalogue import TREATMENT_IDS, absences_for_anchor
-from seed.timeutil import parse_local_date
+from seed.timeutil import add_minutes_local, local_datetime, parse_local_date, to_utc_text
 from seed.validate import occupancy, validate
+
+_ISOLATED_SUNDAY_START = "2030-06-02T08:00:00Z"
+_ISOLATED_SUNDAY_END = "2030-06-02T08:30:00Z"
+_ISOLATED_SUNDAY_TOUCH = "2030-06-02T08:15:00Z"
+_ISOLATED_SUNDAY_NEXT_START = "2030-06-02T08:30:00Z"
+_ISOLATED_SUNDAY_NEXT_END = "2030-06-02T09:00:00Z"
 
 _FORBIDDEN_CLOCK = (
     "datetime.now(",
@@ -154,52 +163,229 @@ def test_validate_non_fictional_phone(tmp_path: Path) -> None:
     assert any("non-fictional" in e for e in errs)
 
 
-def test_overlap_trigger_insert(tmp_path: Path) -> None:
+def _insert_booked(
+    conn: sqlite3.Connection,
+    aid: str,
+    *,
+    patient_id: str,
+    practitioner_id: str,
+    start_utc: str,
+    end_utc: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO appointments (
+            appointment_id, patient_id, practitioner_id, treatment_id,
+            start_utc, end_utc, status, same_day_urgent, created_by_call
+        ) VALUES (?, ?, ?, 'checkup', ?, ?, 'booked', 0, NULL)
+        """,
+        (aid, patient_id, practitioner_id, start_utc, end_utc),
+    )
+
+
+def test_overlap_trigger_same_practitioner_different_patient_insert(tmp_path: Path) -> None:
     db = tmp_path / "clinic.db"
     build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
     conn = sqlite3.connect(db)
     try:
-        row = conn.execute(
-            "SELECT start_utc, end_utc, practitioner_id, patient_id FROM appointments"
-            " WHERE status = 'booked' LIMIT 1"
-        ).fetchone()
+        _insert_booked(
+            conn,
+            "a99001",
+            patient_id="p0001",
+            practitioner_id="dent_1",
+            start_utc=_ISOLATED_SUNDAY_START,
+            end_utc=_ISOLATED_SUNDAY_END,
+        )
         with pytest.raises(sqlite3.IntegrityError, match="overlap"):
-            conn.execute(
-                """
-                INSERT INTO appointments (
-                    appointment_id, patient_id, practitioner_id, treatment_id,
-                    start_utc, end_utc, status, same_day_urgent, created_by_call
-                ) VALUES (?, ?, ?, ?, ?, ?, 'booked', 0, NULL)
-                """,
-                (
-                    "a99998",
-                    row[3],
-                    row[2],
-                    "checkup",
-                    row[0],
-                    row[1],
-                ),
+            _insert_booked(
+                conn,
+                "a99002",
+                patient_id="p0002",
+                practitioner_id="dent_1",
+                start_utc=_ISOLATED_SUNDAY_TOUCH,
+                end_utc=_ISOLATED_SUNDAY_NEXT_END,
             )
     finally:
         conn.close()
 
 
-def test_overlap_trigger_update(tmp_path: Path) -> None:
+def test_overlap_trigger_same_patient_different_practitioner_insert(tmp_path: Path) -> None:
     db = tmp_path / "clinic.db"
     build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
     conn = sqlite3.connect(db)
     try:
-        rows = conn.execute(
-            "SELECT appointment_id, start_utc, end_utc, practitioner_id FROM appointments"
-            " WHERE status = 'booked' LIMIT 2"
-        ).fetchall()
-        aid, _, _, _ = rows[0]
-        _, start_b, end_b, pr_b = rows[1]
+        _insert_booked(
+            conn,
+            "a99003",
+            patient_id="p0001",
+            practitioner_id="dent_1",
+            start_utc=_ISOLATED_SUNDAY_START,
+            end_utc=_ISOLATED_SUNDAY_END,
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="overlap"):
+            _insert_booked(
+                conn,
+                "a99004",
+                patient_id="p0001",
+                practitioner_id="dent_2",
+                start_utc=_ISOLATED_SUNDAY_TOUCH,
+                end_utc=_ISOLATED_SUNDAY_NEXT_END,
+            )
+    finally:
+        conn.close()
+
+
+def test_overlap_trigger_adjacent_insert_allowed(tmp_path: Path) -> None:
+    db = tmp_path / "clinic.db"
+    build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
+    conn = sqlite3.connect(db)
+    try:
+        _insert_booked(
+            conn,
+            "a99005",
+            patient_id="p0001",
+            practitioner_id="dent_1",
+            start_utc=_ISOLATED_SUNDAY_START,
+            end_utc=_ISOLATED_SUNDAY_END,
+        )
+        _insert_booked(
+            conn,
+            "a99006",
+            patient_id="p0002",
+            practitioner_id="dent_1",
+            start_utc=_ISOLATED_SUNDAY_NEXT_START,
+            end_utc=_ISOLATED_SUNDAY_NEXT_END,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_overlap_trigger_cancelled_row_insert_allowed(tmp_path: Path) -> None:
+    db = tmp_path / "clinic.db"
+    build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            """
+            INSERT INTO appointments (
+                appointment_id, patient_id, practitioner_id, treatment_id,
+                start_utc, end_utc, status, same_day_urgent, created_by_call
+            ) VALUES ('a99007', 'p0003', 'dent_3', 'checkup', ?, ?, 'cancelled', 0, NULL)
+            """,
+            (_ISOLATED_SUNDAY_START, _ISOLATED_SUNDAY_END),
+        )
+        _insert_booked(
+            conn,
+            "a99008",
+            patient_id="p0001",
+            practitioner_id="dent_3",
+            start_utc=_ISOLATED_SUNDAY_TOUCH,
+            end_utc=_ISOLATED_SUNDAY_NEXT_END,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_overlap_trigger_cancelled_to_booked_update(tmp_path: Path) -> None:
+    db = tmp_path / "clinic.db"
+    build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
+    conn = sqlite3.connect(db)
+    try:
+        _insert_booked(
+            conn,
+            "a99009",
+            patient_id="p0001",
+            practitioner_id="dent_4",
+            start_utc=_ISOLATED_SUNDAY_START,
+            end_utc=_ISOLATED_SUNDAY_END,
+        )
+        conn.commit()
+        conn.execute(
+            """
+            INSERT INTO appointments (
+                appointment_id, patient_id, practitioner_id, treatment_id,
+                start_utc, end_utc, status, same_day_urgent, created_by_call
+            ) VALUES ('a99010', 'p0002', 'dent_4', 'checkup', ?, ?, 'cancelled', 0, NULL)
+            """,
+            (_ISOLATED_SUNDAY_TOUCH, _ISOLATED_SUNDAY_NEXT_END),
+        )
         with pytest.raises(sqlite3.IntegrityError, match="overlap"):
             conn.execute(
-                "UPDATE appointments SET start_utc = ?, end_utc = ?, practitioner_id = ?"
-                " WHERE appointment_id = ?",
-                (start_b, end_b, pr_b, aid),
+                "UPDATE appointments SET status = 'booked' WHERE appointment_id = 'a99010'"
+            )
+    finally:
+        conn.close()
+
+
+def test_overlap_trigger_same_practitioner_different_patient_update(tmp_path: Path) -> None:
+    db = tmp_path / "clinic.db"
+    build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
+    conn = sqlite3.connect(db)
+    try:
+        _insert_booked(
+            conn,
+            "a99011",
+            patient_id="p0001",
+            practitioner_id="dent_1",
+            start_utc=_ISOLATED_SUNDAY_START,
+            end_utc=_ISOLATED_SUNDAY_END,
+        )
+        conn.execute(
+            """
+            INSERT INTO appointments (
+                appointment_id, patient_id, practitioner_id, treatment_id,
+                start_utc, end_utc, status, same_day_urgent, created_by_call
+            ) VALUES ('a99012', 'p0002', 'dent_2', 'checkup', ?, ?, 'booked', 0, NULL)
+            """,
+            (
+                "2030-06-09T08:00:00Z",
+                "2030-06-09T08:30:00Z",
+            ),
+        )
+        conn.commit()
+        with pytest.raises(sqlite3.IntegrityError, match="overlap"):
+            conn.execute(
+                "UPDATE appointments SET practitioner_id = 'dent_1',"
+                " start_utc = ?, end_utc = ? WHERE appointment_id = 'a99012'",
+                (_ISOLATED_SUNDAY_TOUCH, _ISOLATED_SUNDAY_NEXT_END),
+            )
+    finally:
+        conn.close()
+
+
+def test_overlap_trigger_same_patient_different_practitioner_update(tmp_path: Path) -> None:
+    db = tmp_path / "clinic.db"
+    build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
+    conn = sqlite3.connect(db)
+    try:
+        _insert_booked(
+            conn,
+            "a99013",
+            patient_id="p0001",
+            practitioner_id="dent_1",
+            start_utc=_ISOLATED_SUNDAY_START,
+            end_utc=_ISOLATED_SUNDAY_END,
+        )
+        conn.execute(
+            """
+            INSERT INTO appointments (
+                appointment_id, patient_id, practitioner_id, treatment_id,
+                start_utc, end_utc, status, same_day_urgent, created_by_call
+            ) VALUES ('a99014', 'p0002', 'dent_2', 'checkup', ?, ?, 'booked', 0, NULL)
+            """,
+            (
+                "2030-06-09T09:00:00Z",
+                "2030-06-09T09:30:00Z",
+            ),
+        )
+        conn.commit()
+        with pytest.raises(sqlite3.IntegrityError, match="overlap"):
+            conn.execute(
+                "UPDATE appointments SET patient_id = 'p0001',"
+                " start_utc = ?, end_utc = ? WHERE appointment_id = 'a99014'",
+                (_ISOLATED_SUNDAY_TOUCH, _ISOLATED_SUNDAY_NEXT_END),
             )
     finally:
         conn.close()
@@ -307,6 +493,97 @@ def test_validate_malformed_utc(tmp_path: Path) -> None:
     assert any("malformed UTC" in e for e in errs)
 
 
+@pytest.mark.parametrize(
+    "anchor",
+    ("2026-12-21", "2026-12-28", "2027-03-29"),
+)
+def test_fully_booked_fixture_anchors(tmp_path: Path, anchor: str) -> None:
+    db = tmp_path / f"anchor-{anchor}.db"
+    build_db(db, parse_local_date(anchor), DEFAULT_SEED)
+    assert validate(db) == []
+    conn = sqlite3.connect(db)
+    try:
+        meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+        fixtures = json.loads(meta["fixtures"])
+        fb_date = fixtures["fully_booked"]["date"]
+        closures = {r[0] for r in conn.execute("SELECT date FROM closures")}
+        assert fb_date not in closures
+    finally:
+        conn.close()
+
+
+def test_validate_import_independence() -> None:
+    validate_py = Path(__file__).resolve().parent.parent / "seed" / "validate.py"
+    tree = ast.parse(validate_py.read_text(encoding="utf-8"))
+    forbidden = frozenset({"seed.catalogue", "seed.diary", "seed.people"})
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            mod = node.module
+            if mod in forbidden or any(mod.startswith(f + ".") for f in forbidden):
+                pytest.fail(f"forbidden import in validate.py: {mod}")
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in forbidden:
+                    pytest.fail(f"forbidden import in validate.py: {alias.name}")
+
+
+def test_validate_missing_diary_start(tmp_path: Path) -> None:
+    db = tmp_path / "clinic.db"
+    build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("DELETE FROM meta WHERE key = 'diary_start'")
+        conn.commit()
+    finally:
+        conn.close()
+    errs = validate(db)
+    assert any("diary_start" in e for e in errs)
+
+
+def test_validate_invalid_fixtures_json(tmp_path: Path) -> None:
+    db = tmp_path / "clinic.db"
+    build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("UPDATE meta SET value = 'not json' WHERE key = 'fixtures'")
+        conn.commit()
+    finally:
+        conn.close()
+    errs = validate(db)
+    assert any("fixtures" in e for e in errs)
+
+
+def test_validate_site_row_required(tmp_path: Path) -> None:
+    db = tmp_path / "clinic.db"
+    build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("DELETE FROM site")
+        conn.commit()
+    finally:
+        conn.close()
+    errs = validate(db)
+    assert any("site" in e.lower() for e in errs)
+
+
+def test_madrid_local_to_utc_winter() -> None:
+    dt = local_datetime(parse_local_date("2027-01-12"), "09:00")
+    assert to_utc_text(dt) == "2027-01-12T08:00:00Z"
+
+
+def test_madrid_local_to_utc_summer() -> None:
+    dt = local_datetime(parse_local_date("2027-07-12"), "09:00")
+    assert to_utc_text(dt) == "2027-07-12T07:00:00Z"
+
+
+def test_dst_spring_appointment_sixty_utc_minutes() -> None:
+    start = to_utc_text(local_datetime(parse_local_date("2027-03-26"), "19:00"))
+    end = to_utc_text(add_minutes_local(parse_local_date("2027-03-26"), "19:00", 60))
+    start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert int((end_dt - start_dt).total_seconds() // 60) == 60
+
+
 def test_future_booked_cap_per_patient(tmp_path: Path) -> None:
     db = tmp_path / "clinic.db"
     build_db(db, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
@@ -324,3 +601,14 @@ def test_future_booked_cap_per_patient(tmp_path: Path) -> None:
         assert rows == []
     finally:
         conn.close()
+
+
+def test_fully_booked_fixture_is_bookable_future_day(tmp_path: Path) -> None:
+    """The fixture day is never 'today' or 'tomorrow' for a call on the anchor."""
+    db = tmp_path / "fx.db"
+    anchor = parse_local_date(DEFAULT_ANCHOR)
+    assert build_db(db, anchor, DEFAULT_SEED) == []
+    with sqlite3.connect(db) as conn:
+        raw = conn.execute("SELECT value FROM meta WHERE key = 'fixtures'").fetchone()[0]
+    fixture_day = parse_local_date(json.loads(raw)["fully_booked"]["date"])
+    assert (fixture_day - anchor).days >= 2

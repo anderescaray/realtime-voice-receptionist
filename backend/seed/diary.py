@@ -37,7 +37,6 @@ URGENCY_HISTORY_LOW = 0.03
 URGENCY_HISTORY_HIGH = 0.06
 
 FULLY_BOOKED_PRACTITIONER = "dent_1"
-FULLY_BOOKED_DAY_OFFSET = 4
 
 
 def _practitioner_treatments() -> dict[str, list[str]]:
@@ -99,6 +98,69 @@ def _day_slots(pid: str, d: date, hours: dict) -> list[str]:
     return slots
 
 
+def _pick_fully_booked_day(
+    anchor: date,
+    pid: str,
+    hours: dict,
+    absence: dict[str, list[tuple[date, date]]],
+    closures: frozenset[str],
+) -> date | None:
+    # Start two days after the anchor: the anchor is "today" for calls on it, and a
+    # fixture day must be bookable and distinct from "tomorrow". Fall back over two weeks.
+    for offset in range(2, 14):
+        d = anchor + timedelta(days=offset)
+        if d.isoformat() in closures or _on_absence(pid, d, absence):
+            continue
+        if _day_slots(pid, d, hours):
+            return d
+    return None
+
+
+def _tile_full_day(
+    pid: str,
+    d: date,
+    hours: dict,
+    allowed: list[str],
+) -> list[tuple[str, str]]:
+    """Cover every 15-minute cell with treatments the practitioner performs."""
+    wd = d.weekday()
+    fixture_treatments = [t for t in sorted(allowed) if t != "urgency"]
+    plan: list[tuple[str, str]] = []
+    for seg_start, seg_end in hours[pid].get(wd, []):
+        slots = quarter_hours_between(seg_start, seg_end)
+        covered: set[str] = set()
+        idx = 0
+        while idx < len(slots):
+            if slots[idx] in covered:
+                idx += 1
+                continue
+            start = slots[idx]
+            placed = False
+            for tid in sorted(
+                fixture_treatments, key=lambda t: (-catalogue.TREATMENT_MINUTES[t], t)
+            ):
+                mins = catalogue.TREATMENT_MINUTES[tid]
+                end_dt = add_minutes_local(d, start, mins)
+                end_hhmm = f"{end_dt.hour:02d}:{end_dt.minute:02d}"
+                if not (seg_start <= start and end_hhmm <= seg_end):
+                    continue
+                span = quarter_hours_between(start, end_hhmm)
+                if all(s in slots and s not in covered for s in span):
+                    plan.append((start, tid))
+                    covered.update(span)
+                    placed = True
+                    break
+            if not placed:
+                tid = "checkup"
+                mins = catalogue.TREATMENT_MINUTES[tid]
+                end_dt = add_minutes_local(d, start, mins)
+                end_hhmm = f"{end_dt.hour:02d}:{end_dt.minute:02d}"
+                plan.append((start, tid))
+                covered.update(quarter_hours_between(start, end_hhmm))
+            idx += 1
+    return plan
+
+
 def _pick_treatment(rng: random.Random, allowed: list[str]) -> str:
     weights = [(t, w) for t, w in TREATMENT_WEIGHTS if t in allowed]
     total = sum(w for _, w in weights)
@@ -157,8 +219,10 @@ def generate_appointments(
     diary_end = anchor + timedelta(days=27)
     history_start = anchor - timedelta(days=14)
 
-    fully_day = anchor + timedelta(days=FULLY_BOOKED_DAY_OFFSET)
-    fully_day_iso = fully_day.isoformat()
+    fully_day = _pick_fully_booked_day(
+        anchor, FULLY_BOOKED_PRACTITIONER, hours, absence, catalogue.CLOSURE_DATES
+    )
+    fully_day_iso = fully_day.isoformat() if fully_day else ""
 
     booked_pr: dict[str, list[tuple[str, str]]] = {p: [] for p in practitioners}
     booked_pt: dict[str, list[tuple[str, str]]] = {}
@@ -283,23 +347,12 @@ def generate_appointments(
     )
     no_future_patients = set(sorted(rng.sample(patient_ids, n_no_future)))
 
-    if fully_day_iso not in catalogue.CLOSURE_DATES and not _on_absence(
-        FULLY_BOOKED_PRACTITIONER, fully_day, absence
-    ):
-        full_day_plan: tuple[tuple[str, str], ...] = (
-            ("09:00", "cleaning"),
-            ("09:45", "cleaning"),
-            ("10:30", "cleaning"),
-            ("11:15", "cleaning"),
-            ("12:00", "cleaning"),
-            ("12:45", "cleaning"),
-            ("13:30", "checkup"),
-            ("16:00", "cleaning"),
-            ("16:45", "cleaning"),
-            ("17:30", "cleaning"),
-            ("18:15", "cleaning"),
-            ("19:00", "checkup"),
-            ("19:30", "checkup"),
+    if fully_day is not None:
+        full_day_plan = _tile_full_day(
+            FULLY_BOOKED_PRACTITIONER,
+            fully_day,
+            hours,
+            ptreat[FULLY_BOOKED_PRACTITIONER],
         )
         for i, (start_hhmm, tid) in enumerate(full_day_plan):
             pat = patient_ids[i % len(patient_ids)]
@@ -327,7 +380,7 @@ def generate_appointments(
         for pid in practitioners:
             if _on_absence(pid, day, absence):
                 continue
-            if day == fully_day and pid == FULLY_BOOKED_PRACTITIONER:
+            if fully_day is not None and day == fully_day and pid == FULLY_BOOKED_PRACTITIONER:
                 continue
             wd_slots = _day_slots(pid, day, hours)
             if not wd_slots:
@@ -370,10 +423,10 @@ def generate_appointments(
     for i, row in enumerate(appointments, start=1):
         row["appointment_id"] = f"a{i:05d}"
 
-    diary_fixtures = {
-        "fully_booked": {
+    diary_fixtures: dict[str, Any] = {}
+    if fully_day is not None:
+        diary_fixtures["fully_booked"] = {
             "date": fully_day_iso,
             "practitioner_id": FULLY_BOOKED_PRACTITIONER,
         }
-    }
     return appointments, diary_fixtures
