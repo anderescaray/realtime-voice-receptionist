@@ -532,3 +532,30 @@ def test_connection_usable_after_store_error(tmp_path: Path) -> None:
         start=_madrid(2027, 2, 1, 10, 0),
     )
     assert save(conn, ok, now=NOW, saved_utc=SAVED_UTC).appointment_id is not None
+
+
+def test_a_saved_key_retried_as_another_kind_is_refused(tmp_path: Path) -> None:
+    conn = _seeded_db(tmp_path)
+    staging = Staging("c9")
+    registered = staging.stage_register(
+        NewPatient(
+            first="Irene", last1="Soto", last2=None, dob="1979-03-08", phone="+442079460903"
+        ),
+        "p_new1",
+    )
+    save(conn, registered, now=NOW, saved_utc=SAVED_UTC)
+    extended = staging.stage_booking(
+        Booking(
+            patient_id="p_new1",
+            practitioner_id="dent_1",
+            treatment="checkup",
+            start=datetime(2027, 1, 20, 10, 0, tzinfo=MADRID),
+            end=datetime(2027, 1, 20, 10, 30, tzinfo=MADRID),
+        )
+    )
+    assert extended.operation_key == registered.operation_key
+    before = _counts(conn)
+    with pytest.raises(StoreError) as caught:
+        save(conn, extended, now=NOW, saved_utc=SAVED_UTC)
+    assert caught.value.code == "bad_change"
+    assert _counts(conn) == before

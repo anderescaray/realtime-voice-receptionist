@@ -478,6 +478,10 @@ def test_cancelling_a_same_day_urgency_never_flags_the_call(tmp_path: Path) -> N
     cancel = _pending_cancel(conn, booked.appointment_id, operation_key="c2:1", call_id="c2")
     result = save(conn, cancel, now=NOW, saved_utc=SAVED_UTC)
     assert result.same_day_urgent is False
+    retry = save(conn, cancel, now=NOW, saved_utc=SAVED_UTC)
+    assert retry.already_saved is True
+    assert retry.same_day_urgent is False
+    assert {**vars(retry), "already_saved": False} == vars(result)
 
 
 def test_store_unavailable_on_move(tmp_path: Path) -> None:

@@ -603,10 +603,7 @@ def _result_from_stored(
         book_details = _parse_change_row(book_row)
         appt = book_details["after"]["appointment"]
         change_ids: list[int] = []
-        patient_id: str | None = None
         if reg_row is not None:
-            reg_details = _parse_change_row(reg_row)
-            patient_id = str(reg_details["after"]["patient"]["patient_id"])
             change_ids.append(int(reg_row["change_id"]))
         change_ids.append(int(book_row["change_id"]))
         return SaveResult(
@@ -633,7 +630,8 @@ def _result_from_stored(
                 patient_id=str(appt["patient_id"]),
                 appointment_id=str(appt["appointment_id"]),
                 change_ids=[int(row["change_id"])],
-                same_day_urgent=bool(appt["same_day_urgent"]),
+                # As on the first save: a cancel never raises the staff flag.
+                same_day_urgent=kind == "move" and bool(appt["same_day_urgent"]),
                 already_saved=already_saved,
             )
 
@@ -663,7 +661,10 @@ def _existing_result(conn: sqlite3.Connection, change: PendingChange) -> SaveRes
     ).fetchone()
     if row is None:
         return None
-    return _result_from_stored(conn, change, already_saved=True)
+    result = _result_from_stored(conn, change, already_saved=True)
+    if result.kind != change.kind:
+        raise StoreError("bad_change", "operation key already saved for another kind of change")
+    return result
 
 
 def _validate_change(change: PendingChange) -> None:
