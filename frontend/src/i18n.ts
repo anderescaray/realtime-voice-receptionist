@@ -7,7 +7,7 @@ const es = {
   langSwitchLabel: "Idioma",
   landingTitle: "Recepción por voz para Clínica Dental Los Tilos",
   landingLead:
-    "Demostración de un recepcionista virtual para la clínica ficticia Los Tilos, en Madrid. Atiende en español e inglés, ayuda a pacientes nuevos y conocidos y trabaja con la agenda real de la clínica.",
+    "Demostración de un recepcionista virtual para la clínica ficticia Los Tilos, en Madrid. Atiende en español e inglés, ayuda a pacientes nuevos y conocidos y consulta en vivo los huecos libres de la agenda de prueba.",
   landingPoint1:
     "Identifica a quien llama por nombre y fecha de nacimiento y propone huecos libres verificados.",
   landingPoint2:
@@ -58,7 +58,7 @@ const en: { [K in keyof typeof es]: string } = {
   langSwitchLabel: "Language",
   landingTitle: "Voice reception for Clínica Dental Los Tilos",
   landingLead:
-    "A demo virtual receptionist for the fictional Los Tilos dental clinic in Madrid. It speaks Spanish and English, helps new and returning patients, and works with the clinic's real schedule.",
+    "A demo virtual receptionist for the fictional Los Tilos dental clinic in Madrid. It speaks Spanish and English, helps new and returning patients, and checks live availability in the clinic's demo diary.",
   landingPoint1:
     "Recognises callers by name and date of birth and offers verified free slots.",
   landingPoint2:
