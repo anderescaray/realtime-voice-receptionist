@@ -6,6 +6,8 @@ import json
 import re
 import secrets
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -29,6 +31,7 @@ ERROR_CODES = frozenset(
 
 _DOB_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _PATIENT_ID_TAIL = re.compile(r"(\d+)$")
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 _SQLITE_UNAVAILABLE = frozenset({5, 6, 8, 10, 13, 14})
 
 
@@ -275,10 +278,36 @@ def _rollback(conn: sqlite3.Connection) -> None:
         conn.execute("ROLLBACK")
 
 
-def _same_day_urgent(booking: Booking, now: datetime) -> bool:
-    if booking.treatment != "urgency":
+@contextmanager
+def _write_transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """BEGIN IMMEDIATE ... COMMIT; any failure rolls back, so the database is unchanged.
+
+    A database that cannot be written (busy past the timeout, locked, read-only, I/O,
+    full) becomes `store_unavailable`; a constraint failure the caller did not handle
+    becomes `bad_change`. Any other error is a bug and is re-raised as it is.
+    """
+    _begin(conn)
+    try:
+        yield
+        conn.execute("COMMIT")
+    except sqlite3.OperationalError as exc:
+        _rollback(conn)
+        if _is_store_unavailable(exc):
+            raise StoreError("store_unavailable") from exc
+        raise
+    except sqlite3.IntegrityError as exc:
+        _rollback(conn)
+        raise StoreError("bad_change") from exc
+    except BaseException:
+        _rollback(conn)
+        raise
+
+
+def _same_day_urgent(treatment_id: str, start: datetime, now: datetime) -> bool:
+    """An urgency appointment on the call's own day (Madrid dates) is flagged for staff."""
+    if treatment_id != "urgency":
         return False
-    start_local = booking.start.astimezone(MADRID).date()
+    start_local = start.astimezone(MADRID).date()
     now_local = now.astimezone(MADRID).date()
     return start_local == now_local
 
@@ -329,6 +358,29 @@ def _register_details(patient_id: str, patient: NewPatient) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
+def _appointment_dict(
+    *,
+    appointment_id: str,
+    patient_id: str,
+    practitioner_id: str,
+    treatment_id: str,
+    start: datetime,
+    end: datetime,
+    status: str,
+    same_day_urgent: bool,
+) -> dict[str, Any]:
+    return {
+        "appointment_id": appointment_id,
+        "patient_id": patient_id,
+        "practitioner_id": practitioner_id,
+        "treatment_id": treatment_id,
+        "start_utc": utc_text(start),
+        "end_utc": utc_text(end),
+        "status": status,
+        "same_day_urgent": 1 if same_day_urgent else 0,
+    }
+
+
 def _book_details(
     appointment_id: str,
     booking: Booking,
@@ -338,18 +390,36 @@ def _book_details(
     payload = {
         "before": None,
         "after": {
-            "appointment": {
-                "appointment_id": appointment_id,
-                "patient_id": booking.patient_id,
-                "practitioner_id": booking.practitioner_id,
-                "treatment_id": booking.treatment,
-                "start_utc": utc_text(booking.start),
-                "end_utc": utc_text(booking.end),
-                "status": "booked",
-                "same_day_urgent": 1 if same_day_urgent else 0,
-            }
+            "appointment": _appointment_dict(
+                appointment_id=appointment_id,
+                patient_id=booking.patient_id,
+                practitioner_id=booking.practitioner_id,
+                treatment_id=booking.treatment,
+                start=booking.start,
+                end=booking.end,
+                status="booked",
+                same_day_urgent=same_day_urgent,
+            )
         },
     }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _appointment_dict_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "appointment_id": str(row["appointment_id"]),
+        "patient_id": str(row["patient_id"]),
+        "practitioner_id": str(row["practitioner_id"]),
+        "treatment_id": str(row["treatment_id"]),
+        "start_utc": str(row["start_utc"]),
+        "end_utc": str(row["end_utc"]),
+        "status": str(row["status"]),
+        "same_day_urgent": int(row["same_day_urgent"]),
+    }
+
+
+def _move_cancel_details(*, before: dict[str, Any], after: dict[str, Any]) -> str:
+    payload = {"before": {"appointment": before}, "after": {"appointment": after}}
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
@@ -443,23 +513,57 @@ def _insert_appointment(
     return appointment_id
 
 
-def _overlap_code(conn: sqlite3.Connection, booking: Booking) -> str:
-    start_utc = utc_text(booking.start)
-    end_utc = utc_text(booking.end)
+def _overlap_code(
+    conn: sqlite3.Connection,
+    *,
+    practitioner_id: str,
+    start: datetime,
+    end: datetime,
+    exclude_appointment_id: str | None = None,
+) -> str:
+    """Which diary the overlap trigger refused for: the practitioner's wins over the patient's."""
     row = conn.execute(
         """
         SELECT 1 FROM appointments
         WHERE status = 'booked'
+          AND appointment_id IS NOT ?
           AND practitioner_id = ?
           AND start_utc < ?
           AND end_utc > ?
         LIMIT 1
         """,
-        (booking.practitioner_id, end_utc, start_utc),
+        (exclude_appointment_id, practitioner_id, utc_text(end), utc_text(start)),
     ).fetchone()
-    if row is not None:
-        return "slot_taken"
-    return "patient_overlap"
+    return "slot_taken" if row is not None else "patient_overlap"
+
+
+def _fetch_booked_appointment(conn: sqlite3.Connection, appointment_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM appointments WHERE appointment_id = ?",
+        (appointment_id,),
+    ).fetchone()
+
+
+def _assert_appointment_seen(
+    row: sqlite3.Row | None,
+    *,
+    patient_id: str,
+    seen_practitioner_id: str,
+    seen_start: datetime,
+    seen_end: datetime,
+) -> None:
+    if row is None:
+        raise StoreError("appointment_not_seen")
+    if str(row["status"]) != "booked":
+        raise StoreError("appointment_not_seen")
+    if str(row["patient_id"]) != patient_id:
+        raise StoreError("appointment_not_seen")
+    if str(row["practitioner_id"]) != seen_practitioner_id:
+        raise StoreError("appointment_not_seen")
+    if str(row["start_utc"]) != utc_text(seen_start):
+        raise StoreError("appointment_not_seen")
+    if str(row["end_utc"]) != utc_text(seen_end):
+        raise StoreError("appointment_not_seen")
 
 
 def _parse_change_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -501,6 +605,24 @@ def _result_from_stored(
             already_saved=already_saved,
         )
 
+    for action, kind in (("move", "move"), ("cancel", "cancel")):
+        row = conn.execute(
+            "SELECT * FROM changes WHERE operation_key = ? AND action = ?",
+            (change.operation_key, action),
+        ).fetchone()
+        if row is not None:
+            details = _parse_change_row(row)
+            appt = details["after"]["appointment"]
+            return SaveResult(
+                operation_key=change.operation_key,
+                kind=kind,
+                patient_id=str(appt["patient_id"]),
+                appointment_id=str(appt["appointment_id"]),
+                change_ids=[int(row["change_id"])],
+                same_day_urgent=bool(appt["same_day_urgent"]),
+                already_saved=already_saved,
+            )
+
     reg_row = conn.execute(
         "SELECT * FROM changes WHERE operation_key = ? AND action = 'register'",
         (change.operation_key,),
@@ -532,8 +654,14 @@ def _existing_result(conn: sqlite3.Connection, change: PendingChange) -> SaveRes
 
 def _validate_change(change: PendingChange) -> None:
     kind = change.kind
-    if kind in ("move", "cancel"):
-        raise StoreError("bad_change", "not implemented yet")
+    if kind == "move":
+        if change.move is None:
+            raise StoreError("bad_change", "move requires move")
+        return
+    if kind == "cancel":
+        if change.cancel is None:
+            raise StoreError("bad_change", "cancel requires cancel")
+        return
     if kind == "register":
         if change.new_patient is None:
             raise StoreError("bad_change", "register requires new_patient")
@@ -556,22 +684,19 @@ def save(
     now: datetime,
     saved_utc: datetime,
 ) -> SaveResult:
-    """Persist a staged register, book, or register_book change."""
+    """Persist a staged change (register, book, register_book, move, or cancel)."""
     _require_aware(now, "now")
     _require_aware(saved_utc, "saved_utc")
     _validate_change(change)
-
-    _begin(conn)
 
     patient_id: str | None = None
     appointment_id: str | None = None
     change_ids: list[int] = []
     same_day_urgent = False
 
-    try:
+    with _write_transaction(conn):
         existing = _existing_result(conn, change)
         if existing is not None:
-            conn.execute("COMMIT")
             return existing
 
         if change.kind in ("register", "register_book"):
@@ -608,7 +733,7 @@ def save(
                     start=booking.start,
                     end=booking.end,
                 )
-            same_day_urgent = _same_day_urgent(booking, now)
+            same_day_urgent = _same_day_urgent(booking.treatment, booking.start, now)
             try:
                 appointment_id = _insert_appointment(
                     conn,
@@ -617,12 +742,15 @@ def save(
                     same_day_urgent=same_day_urgent,
                 )
             except sqlite3.IntegrityError as exc:
-                if "overlap" in str(exc):
-                    code = _overlap_code(conn, booking)
-                    _rollback(conn)
-                    raise StoreError(code) from exc
-                _rollback(conn)
-                raise StoreError("bad_change") from exc
+                if "overlap" not in str(exc):
+                    raise
+                code = _overlap_code(
+                    conn,
+                    practitioner_id=booking.practitioner_id,
+                    start=booking.start,
+                    end=booking.end,
+                )
+                raise StoreError(code) from exc
 
             book_details = _book_details(
                 appointment_id,
@@ -640,7 +768,100 @@ def save(
                 )
             )
 
-        conn.execute("COMMIT")
+        if change.kind == "move":
+            assert change.move is not None
+            move = change.move
+            row = _fetch_booked_appointment(conn, move.appointment_id)
+            _assert_appointment_seen(
+                row,
+                patient_id=move.patient_id,
+                seen_practitioner_id=move.seen_practitioner_id,
+                seen_start=move.seen_start,
+                seen_end=move.seen_end,
+            )
+            assert row is not None
+            before = _appointment_dict_from_row(row)
+            treatment_id = str(row["treatment_id"])
+            same_day_urgent = _same_day_urgent(treatment_id, move.start, now)
+            try:
+                conn.execute(
+                    """
+                    UPDATE appointments
+                    SET practitioner_id = ?, start_utc = ?, end_utc = ?, same_day_urgent = ?
+                    WHERE appointment_id = ?
+                    """,
+                    (
+                        move.practitioner_id,
+                        utc_text(move.start),
+                        utc_text(move.end),
+                        1 if same_day_urgent else 0,
+                        move.appointment_id,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "overlap" not in str(exc):
+                    raise
+                code = _overlap_code(
+                    conn,
+                    practitioner_id=move.practitioner_id,
+                    start=move.start,
+                    end=move.end,
+                    exclude_appointment_id=move.appointment_id,
+                )
+                raise StoreError(code) from exc
+            after_row = _fetch_booked_appointment(conn, move.appointment_id)
+            assert after_row is not None
+            after = _appointment_dict_from_row(after_row)
+            patient_id = move.patient_id
+            appointment_id = move.appointment_id
+            change_ids.append(
+                _insert_change(
+                    conn,
+                    operation_key=change.operation_key,
+                    call_id=change.call_id,
+                    action="move",
+                    details=_move_cancel_details(before=before, after=after),
+                    saved_utc=saved_utc,
+                )
+            )
+
+        if change.kind == "cancel":
+            assert change.cancel is not None
+            cancel = change.cancel
+            row = _fetch_booked_appointment(conn, cancel.appointment_id)
+            _assert_appointment_seen(
+                row,
+                patient_id=cancel.patient_id,
+                seen_practitioner_id=cancel.seen_practitioner_id,
+                seen_start=cancel.seen_start,
+                seen_end=cancel.seen_end,
+            )
+            assert row is not None
+            before = _appointment_dict_from_row(row)
+            conn.execute(
+                "UPDATE appointments SET status = 'cancelled' WHERE appointment_id = ?",
+                (cancel.appointment_id,),
+            )
+            after_row = conn.execute(
+                "SELECT * FROM appointments WHERE appointment_id = ?",
+                (cancel.appointment_id,),
+            ).fetchone()
+            assert after_row is not None
+            after = _appointment_dict_from_row(after_row)
+            patient_id = cancel.patient_id
+            appointment_id = cancel.appointment_id
+            same_day_urgent = bool(after["same_day_urgent"])
+            change_ids.append(
+                _insert_change(
+                    conn,
+                    operation_key=change.operation_key,
+                    call_id=change.call_id,
+                    action="cancel",
+                    details=_move_cancel_details(before=before, after=after),
+                    saved_utc=saved_utc,
+                )
+            )
+
         return SaveResult(
             operation_key=change.operation_key,
             kind=change.kind,
@@ -650,18 +871,123 @@ def save(
             same_day_urgent=same_day_urgent,
             already_saved=False,
         )
-    except StoreError:
-        _rollback(conn)
-        raise
-    except sqlite3.OperationalError as exc:
-        _rollback(conn)
-        if _is_store_unavailable(exc):
-            raise StoreError("store_unavailable") from exc
-        raise
-    except sqlite3.IntegrityError as exc:
-        _rollback(conn)
-        raise StoreError("bad_change") from exc
-    except BaseException:
-        # Never leave a write transaction open on an unexpected error.
-        _rollback(conn)
-        raise
+
+
+def _mint_message_id(conn: sqlite3.Connection) -> str:
+    for _ in range(5):
+        message_id = f"m_{secrets.token_hex(4)}"
+        row = conn.execute(
+            "SELECT 1 FROM messages WHERE message_id = ?",
+            (message_id,),
+        ).fetchone()
+        if row is None:
+            return message_id
+    raise StoreError("store_unavailable", "could not mint message id")
+
+
+def add_message(
+    conn: sqlite3.Connection,
+    *,
+    call_id: str,
+    name: str,
+    phone: str,
+    text: str,
+    urgent: bool,
+    saved_utc: datetime,
+) -> str:
+    if not call_id.strip():
+        raise StoreError("bad_change", "call_id required")
+    if not name.strip():
+        raise StoreError("bad_change", "name required")
+    if not phone.strip():
+        raise StoreError("bad_change", "phone required")
+    if not text.strip():
+        raise StoreError("bad_change", "text required")
+    _require_aware(saved_utc, "saved_utc")
+    with _write_transaction(conn):
+        message_id = _mint_message_id(conn)
+        conn.execute(
+            """
+            INSERT INTO messages (message_id, call_id, name, phone, text, urgent, saved_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                message_id,
+                call_id,
+                name,
+                phone,
+                text,
+                1 if urgent else 0,
+                utc_text(saved_utc),
+            ),
+        )
+        return message_id
+
+
+def add_review_link(
+    conn: sqlite3.Connection,
+    *,
+    call_id: str,
+    token_sha256: str,
+    expires_utc: datetime,
+) -> None:
+    if not _SHA256_HEX_RE.fullmatch(token_sha256):
+        raise StoreError("bad_change", "token_sha256 must be 64 lowercase hex characters")
+    _require_aware(expires_utc, "expires_utc")
+    with _write_transaction(conn):
+        conn.execute(
+            """
+            INSERT INTO review_links (token_sha256, call_id, expires_utc)
+            VALUES (?, ?, ?)
+            """,
+            (token_sha256, call_id, utc_text(expires_utc)),
+        )
+
+
+def expired_calls(conn: sqlite3.Connection, *, now: datetime) -> list[str]:
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise StoreError("bad_change", "now must be timezone-aware")
+    now_text = utc_text(now)
+    rows = conn.execute(
+        """
+        SELECT call_id FROM review_links
+        WHERE expires_utc <= ?
+        ORDER BY call_id
+        """,
+        (now_text,),
+    ).fetchall()
+    return [str(row["call_id"]) for row in rows]
+
+
+def purge_call(conn: sqlite3.Connection, call_id: str) -> dict[str, int]:
+    with _write_transaction(conn):
+        link = conn.execute(
+            "SELECT 1 FROM review_links WHERE call_id = ?",
+            (call_id,),
+        ).fetchone()
+        if link is None:
+            raise StoreError("bad_change", "no review link")
+        cur = conn.execute(
+            """
+            DELETE FROM appointments
+            WHERE patient_id IN (SELECT patient_id FROM patients WHERE created_by_call = ?)
+               OR created_by_call = ?
+            """,
+            (call_id, call_id),
+        )
+        appointments = cur.rowcount
+        cur = conn.execute("DELETE FROM patients WHERE created_by_call = ?", (call_id,))
+        patients = cur.rowcount
+        cur = conn.execute("DELETE FROM messages WHERE call_id = ?", (call_id,))
+        messages = cur.rowcount
+        cur = conn.execute("DELETE FROM changes WHERE call_id = ?", (call_id,))
+        changes = cur.rowcount
+        cur = conn.execute("DELETE FROM review_links WHERE call_id = ?", (call_id,))
+        review_links = cur.rowcount
+        return {
+            "appointments": appointments,
+            "patients": patients,
+            "messages": messages,
+            "changes": changes,
+            "review_links": review_links,
+        }
