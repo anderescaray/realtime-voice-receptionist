@@ -486,7 +486,8 @@ The log is private: it holds transcripts and patient data. Only the console API 
 | `greeting_latency` | `secs` | Built |
 | `latency` | `secs` (server: caller stopped → first agent audio out) | Built |
 | `latency_breakdown` | `measured_from`, `total_secs`, `stages[]` | Built |
-| `heard_latency` | `secs` (measured by the browser page) | Built |
+| `heard_latency` | `secs` (measured by the browser page or the bench), `overlapped?` (§13: agent audio started before the caller finished or under 150 ms after) | Built (`overlapped` VO-06) |
+| `heard_unanswered` | – (a caller turn the page or the bench heard no answer to; §13) | Built (VO-06) |
 | `usage` | `service` `llm`\|`s2s`\|`stt`\|`tts`\|`brain`, `model`, token or character counts | Built (`brain`, `stt` to build) |
 | `brain_request` / `brain_reply` | `request`, `language` / `say`, `phrase`, `secs`, `error?` | To build |
 | `tool_call` / `tool_result` | `id`, `name`, `args` / `id`, `ok`, `result` or `error`, `message` | To build |

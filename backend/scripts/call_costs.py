@@ -162,8 +162,9 @@ def report(path: Path) -> CallReport:
             last_breakdown = e
         elif kind == "heard_latency":
             secs = e["secs"]
-            r.heard_turns.append(secs)
             answered = not e.get("overlapped") and secs >= OVERLAP_SECS
+            # A turn flagged as overlapped counts as one, whatever its secs.
+            r.heard_turns.append(secs if answered else min(secs, 0.0))
             if answered:
                 stages: dict[str, float] = {}
                 if last_breakdown and usable(last_breakdown) and e["t"] - last_breakdown["t"] < 3:
@@ -300,7 +301,7 @@ def group_table(reports: list[CallReport]) -> list[str]:
     rows.append("")
     for name in names:
         hs = summarise(t for r in groups[name] for t in r.heard_turns)
-        ss = summarise(r.latencies for r in groups[name])
+        ss = summarise((v for r in groups[name] for v in r.latencies), split_overlaps=False)
         rows.append(hs.format("heard").replace("heard:", f"heard ({name}):"))
         rows.append(ss.format("server").replace("server:", f"server ({name}):"))
     return rows

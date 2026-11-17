@@ -203,3 +203,13 @@ test("each answer is one turn, however many sentences it has", () => {
   assert.ok(Math.abs(events[0].ms - 900) <= 2 * TICK);
   assert.ok(Math.abs(events[1].ms - 1100) <= 2 * TICK);
 });
+
+test("an agent answer on the very tick unanswered would fire still counts as a turn", () => {
+  const meter = new TurnMeter({ unansweredMs: 8000 });
+  for (const [t, you, agent] of [[0, 0, 0.1], [500, 0, 0.1], [1500, 0, 0], [2000, 0.1, 0], [2500, 0.1, 0]]) {
+    meter.update(t, you, agent);
+  }
+  // The caller stopped at 2500; the agent starts exactly 8 s later.
+  const event = meter.update(10500, 0, 0.1);
+  assert.equal(event.kind, "turn");
+});

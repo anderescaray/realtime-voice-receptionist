@@ -92,3 +92,38 @@ def test_summarise_classifies_at_overlap_boundary():
     assert "overlap 0%" in s.format("heard")
     assert "overlap -," in LatencySummary(answered=[], overlapped=0, unanswered=0).format("heard")
     assert "overlap -," in s.format("server")
+
+
+def test_server_latency_is_never_split_into_overlaps():
+    s = summarise([0.12, 1.0], split_overlaps=False)
+    assert s.answered == [0.12, 1.0] and s.overlapped == 0
+    assert "overlap -," in s.format("server")
+
+
+def test_call_costs_honours_the_overlapped_flag(tmp_path):
+    from scripts import call_costs
+
+    log = tmp_path / "abc.jsonl"
+    events = [
+        {"t": 0, "kind": "call_started", "voice": "cascade"},
+        {"t": 1, "kind": "heard_latency", "secs": 0.4, "overlapped": True},
+        {"t": 2, "kind": "heard_latency", "secs": 1.2},
+        {"t": 3, "kind": "heard_unanswered"},
+        {"t": 4, "kind": "call_ended", "duration_secs": 4},
+    ]
+    log.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    summary = call_costs.report(log).heard_summary
+    assert (summary.answered, summary.overlapped, summary.unanswered) == ([1.2], 1, 1)
+
+
+def test_bench_report_skips_truncated_log_lines(tmp_path, capsys):
+    bench, calls = tmp_path / "bench", tmp_path / "calls"
+    bench.mkdir()
+    calls.mkdir()
+    (bench / "dddd.turns.json").write_text(json.dumps([{"spoke_until": 0.0, "heard_at": 1.0}]))
+    (calls / "dddd.jsonl").write_text(
+        json.dumps({"t": 0, "kind": "call_started", "voice": "gemini", "now": "2026-11-07T10:00"})
+        + '\n\n{"t": 1, "kin'
+    )
+    bench_report.main(["--bench-dir", str(bench), "--calls-dir", str(calls)])
+    assert "2026-11-07 gemini" in capsys.readouterr().out

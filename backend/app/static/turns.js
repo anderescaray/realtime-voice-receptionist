@@ -116,15 +116,7 @@ export class TurnMeter {
     }
 
     let event = null;
-    if (
-      this.armed &&
-      this.greeted &&
-      now - this.lastYouLoud >= o.unansweredMs
-    ) {
-      event = { kind: "unanswered" };
-      this.armed = false;
-      this.speechStart = null;
-    } else if (agent > o.agentSpeaking) {
+    if (agent > o.agentSpeaking) {
       const onset = now - this.lastAgentLoud > o.agentGapMs;
       if (onset && !this.greetingStarted) {
         this.greetingStarted = true;
@@ -135,6 +127,12 @@ export class TurnMeter {
         this.speechStart = null;
       }
       this.lastAgentLoud = now;
+    }
+    // Checked after the agent: an answer that starts on this very tick still counts.
+    if (!event && this.armed && this.greeted && now - this.lastYouLoud >= o.unansweredMs) {
+      event = { kind: "unanswered" };
+      this.armed = false;
+      this.speechStart = null;
     }
     return event;
   }

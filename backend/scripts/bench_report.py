@@ -23,7 +23,11 @@ def voice_for_call(calls_dir: Path, call_id: str) -> str:
         return "?"
     day, voice, models = "", "?", []
     for line in path.read_text(encoding="utf-8").splitlines():
-        e = json.loads(line)
+        try:
+            e = json.loads(line)
+            e["kind"]
+        except (ValueError, KeyError, TypeError):
+            continue  # a blank or truncated line (a call killed mid-write)
         if e["kind"] == "call_started":
             day = str(e.get("now", ""))[:10]
             voice = e.get("voice", voice)

@@ -33,7 +33,7 @@ from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 from av import AudioFrame
 
 from app import config
-from app.latency_report import summarise
+from app.latency_report import OVERLAP_SECS, summarise
 from scripts import call_costs
 
 RATE = 48_000
@@ -301,12 +301,22 @@ async def one_call(
                 print("  no answer within the timeout")
                 turns.append({"spoke_until": round(ended, 3), "heard_at": None})
                 latencies.append(None)
+                await asyncio.to_thread(
+                    post, port, "/api/heard", {"pc_id": answer["pc_id"], "kind": "unanswered"}
+                )
                 continue
             secs = ear.onset_at - ended
             latencies.append(secs)
             turns.append({"spoke_until": round(ended, 3), "heard_at": round(ear.onset_at, 3)})
             await asyncio.to_thread(
-                post, port, "/api/heard", {"pc_id": answer["pc_id"], "secs": secs}
+                post,
+                port,
+                "/api/heard",
+                {
+                    "pc_id": answer["pc_id"],
+                    "secs": secs,
+                    "kind": "overlap" if secs < OVERLAP_SECS else "turn",
+                },
             )
             await ear.answer_finished()
     finally:

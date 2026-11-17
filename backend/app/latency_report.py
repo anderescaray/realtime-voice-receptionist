@@ -17,14 +17,20 @@ def pct(values: list[float], q: int) -> float | None:
     return statistics.quantiles(values, n=100, method="inclusive")[q - 1]
 
 
-def summarise(latencies_secs: Iterable[float | None]) -> LatencySummary:
+def summarise(
+    latencies_secs: Iterable[float | None], *, split_overlaps: bool = True
+) -> LatencySummary:
+    """One value per caller turn: None = unanswered; under OVERLAP_SECS = overlapped.
+
+    Server latency cannot see overlaps (the server does not hear the caller's audio
+    path), so pass split_overlaps=False there: every value is an answered turn."""
     answered: list[float] = []
     overlapped = 0
     unanswered = 0
     for v in latencies_secs:
         if v is None:
             unanswered += 1
-        elif v < OVERLAP_SECS:
+        elif split_overlaps and v < OVERLAP_SECS:
             overlapped += 1
         else:
             answered.append(v)
