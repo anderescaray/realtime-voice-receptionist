@@ -1,7 +1,10 @@
-.PHONY: run test lint verify costs seed
+.PHONY: run test lint verify costs seed console
 
 run:     ## start the call server on :7860
 	uv run python -m app.server
+
+console: ## start the private console API on 127.0.0.1:7861
+	uv run python -m app.console_api
 
 test:
 	uv run pytest -q
