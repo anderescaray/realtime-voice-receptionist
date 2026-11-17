@@ -108,6 +108,7 @@ describe("startVoiceCall", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("posts offer with request_data.language and no top-level language", async () => {

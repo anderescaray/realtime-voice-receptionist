@@ -195,6 +195,7 @@ export function CallPanel({
         }
         if (next === "ended" || next === "error") {
           stopMeters();
+          setNeedsAudioTap(false);
           liveSinceRef.current = null;
         }
       },
@@ -213,7 +214,10 @@ export function CallPanel({
   const onTapToHear = () => {
     const audio = audioRef.current;
     if (!audio) return;
-    void audio.play().then(() => setNeedsAudioTap(false));
+    void audio
+      .play()
+      .then(() => setNeedsAudioTap(false))
+      .catch(() => {}); // still blocked: the button stays
   };
 
   const inCall = phase === "live" || phase === "connecting" || phase === "requesting-mic";
