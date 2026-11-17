@@ -49,7 +49,7 @@ Rules:
 | `openai` | A2 | OpenAI GPT-Live-1, speech to speech | Slot only: refuses to start. Measured in VO-05 |
 | `none` | – | Silent stub: wires audio in and out, says nothing | Built. Plumbing tests only |
 
-The choice of primary and fallback is provisional until VO-05 measures A2 in the same harness. FD-01's figures (scripted callers): heard latency p50/p90 1490/1991 ms for A1 (n = 46 answered turns), 2490/3281 ms for B (n = 28); about $0.027 per minute for A1 at paid rates, rising with call length, and $0.008 for B. These were recorded before the reporting rule in §13 and carry no overlap rate; VO-06 republishes them in that format, and until then they are not quoted elsewhere.
+The choice of primary and fallback is provisional until VO-05 measures A2 in the same harness. FD-01's figures, heard latency over all scripted bench runs of 2026-11-07 (30 calls for A1, 8 for B), in the format of §13: A1 p50 1490 / p90 2048 ms (n = 104 answered, overlap 12%, 0 unanswered), B p50 2522 / p90 3204 ms (n = 32 answered, overlap 0%, 0 unanswered); the earlier n = 46 / 28 figures were a subset reported before §13, and "0 unanswered" is a floor, because the bench did not record unanswered turns before VO-06. About $0.027 per minute for A1 at paid rates, rising with call length, and $0.008 for B.
 
 **Primary is a production intent, not the code default.** `config.VOICE` stays `cascade` by default until the Gemini paid tier is in place and VO-05 decides, because on the free tier Google may use the audio (scripted callers only). Automatic failover from primary to fallback is not in the MVP. (Decision D12.)
 
