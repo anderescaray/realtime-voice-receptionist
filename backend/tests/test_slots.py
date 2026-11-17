@@ -6,6 +6,7 @@ import json
 import shutil
 import sqlite3
 import time
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -37,9 +38,10 @@ NOW = datetime(2026, 11, 16, 10, 0, tzinfo=MADRID)
 FORBIDDEN_CLOCK = ("datetime.now(", "datetime.utcnow(", "date.today(", "time.time(")
 
 
-def local(day: date, hhmm: str) -> datetime:
+def local(day: date, hhmm: str, fold: int = 0) -> datetime:
+    """A Madrid wall-clock reading; `fold=1` picks the second pass of a repeated hour."""
     hour, minute = (int(part) for part in hhmm.split(":"))
-    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=MADRID)
+    return datetime(day.year, day.month, day.day, hour, minute, fold=fold, tzinfo=MADRID)
 
 
 def utc_text(moment: datetime) -> str:
@@ -144,12 +146,13 @@ class Clinic:
         patient_id: str = "pat_1",
         status: str = "booked",
         appointment_id: str | None = None,
+        fold: int = 0,
     ) -> str:
         self.patient(patient_id)
         self._appointments += 1
         aid = appointment_id or f"a_{self._appointments:04d}"
-        start = local(day, start_hhmm)
-        end = start + timedelta(minutes=MINUTES[treatment])
+        start = local(day, start_hhmm, fold)
+        end = start.astimezone(UTC) + timedelta(minutes=MINUTES[treatment])
         self.conn.execute(
             "INSERT INTO appointments (appointment_id, patient_id, practitioner_id,"
             " treatment_id, start_utc, end_utc, status, same_day_urgent, created_by_call)"
@@ -245,6 +248,39 @@ def test_split_shift_never_runs_across_the_break(clinic: Clinic) -> None:
     assert "15:45" not in starts
     assert "16:00" in starts
     assert starts[-1] == "19:00"
+
+
+def test_overlapping_working_hours_rows_offer_each_slot_once(clinic: Clinic) -> None:
+    clinic.practitioner("d1", hours=(("09:00", "12:00"), ("10:00", "13:00")))
+    clinic.practitioner("d2", hours=(("09:00", "13:00"), ("09:00", "13:00")))
+    result = search_slots(
+        clinic.conn, now=NOW, treatment="checkup", after=TUESDAY, before=TUESDAY, limit=200
+    )
+    for pid in ("d1", "d2"):
+        starts = starts_on(result, TUESDAY, pid)
+        assert starts == sorted(set(starts))
+        assert starts[0] == "09:00"
+        assert starts[-1] == "12:30"
+        assert len(starts) == 15
+
+
+def test_a_treatment_runs_across_the_join_of_two_rows(clinic: Clinic) -> None:
+    clinic.practitioner(
+        "d1", treatments=("extraction",), hours=(("09:00", "12:00"), ("11:30", "13:00"))
+    )
+    clinic.practitioner(
+        "d2", treatments=("extraction",), hours=(("09:00", "12:00"), ("12:00", "13:00"))
+    )
+    result = search_slots(
+        clinic.conn, now=NOW, treatment="extraction", after=TUESDAY, before=TUESDAY, limit=200
+    )
+    for pid in ("d1", "d2"):
+        starts = starts_on(result, TUESDAY, pid)
+        assert starts == sorted(set(starts))
+        assert starts[0] == "09:00"
+        assert starts[-1] == "12:00"  # ends at 13:00, only because the rows are merged
+        assert "11:15" in starts  # inside neither row on its own
+        assert len(starts) == 13
 
 
 def test_slots_lie_inside_a_working_interval(november: sqlite3.Connection) -> None:
@@ -425,6 +461,116 @@ def test_reasons_group_by_code_with_their_dates(clinic: Clinic) -> None:
     assert reason_for(result, "d1", "clinic_closed").dates == ["2026-11-18"]
     assert reason_for(result, "d1", "absent").dates == ["2026-11-19", "2026-11-20", "2026-11-21"]
     assert reason_for(result, "d1", "not_working_that_day").dates == ["2026-11-22"]
+
+
+# --- which rule reports a day ----------------------------------------------
+#
+# Several rules can hit one day. The day's reason is the first of them in the order
+# of contracts §5.6, whatever else would also have emptied the day. Each case below
+# puts two neighbours in that order on the same day.
+
+
+def _closed_and_away_all_day(clinic: Clinic) -> None:
+    clinic.practitioner("d1").closure(TUESDAY).absence("d1", TUESDAY)
+
+
+def _away_all_day_on_a_weekday_off(clinic: Clinic) -> None:
+    clinic.practitioner("d1", weekdays=(0,)).absence("d1", TUESDAY)
+
+
+def _weekday_off_with_a_part_day_absence(clinic: Clinic) -> None:
+    clinic.practitioner("d1", weekdays=(0,)).absence(
+        "d1", TUESDAY, start_local="09:00", end_local="11:00"
+    )
+
+
+def _part_day_absence_over_a_booked_out_shift(clinic: Clinic) -> None:
+    clinic.practitioner("d1", hours=(("09:00", "10:00"),))
+    clinic.absence("d1", TUESDAY, start_local="08:00", end_local="20:00")
+    clinic.appointment("d1", TUESDAY, "09:00", patient_id="pat_1")
+    clinic.appointment("d1", TUESDAY, "09:30", patient_id="pat_2")
+
+
+def _booked_out_inside_the_lead_time(clinic: Clinic) -> None:
+    clinic.practitioner("d1", treatments=("urgency",), hours=(("09:00", "11:00"),))
+    for index, start in enumerate(("09:00", "09:30", "10:00", "10:30")):
+        clinic.appointment("d1", MONDAY, start, treatment="urgency", patient_id=f"pat_{index}")
+
+
+def _morning_shift_inside_the_lead_time(clinic: Clinic) -> None:
+    clinic.practitioner("d1", treatments=("urgency",), hours=(("09:00", "11:00"),))
+
+
+def _morning_shift_with_a_busy_patient(clinic: Clinic) -> None:
+    clinic.practitioner("d1", hours=(("09:00", "10:00"),))
+    clinic.practitioner("d2", treatments=("extraction",), hours=(("09:00", "10:00"),))
+    clinic.appointment("d2", TUESDAY, "09:00", treatment="extraction", patient_id="pat_1")
+
+
+@pytest.mark.parametrize(
+    ("build", "search", "expected"),
+    (
+        pytest.param(
+            _closed_and_away_all_day,
+            {"treatment": "checkup", "after": TUESDAY, "before": TUESDAY},
+            "clinic_closed",
+            id="a-closure-beats-a-whole-day-absence",
+        ),
+        pytest.param(
+            _away_all_day_on_a_weekday_off,
+            {"treatment": "checkup", "after": TUESDAY, "before": TUESDAY},
+            "absent",
+            id="a-whole-day-absence-beats-a-weekday-off",
+        ),
+        pytest.param(
+            _weekday_off_with_a_part_day_absence,
+            {"treatment": "checkup", "after": TUESDAY, "before": TUESDAY},
+            "not_working_that_day",
+            id="a-weekday-off-beats-a-part-day-absence",
+        ),
+        pytest.param(
+            _part_day_absence_over_a_booked_out_shift,
+            {"treatment": "checkup", "after": TUESDAY, "before": TUESDAY},
+            "absent",
+            id="a-part-day-absence-over-the-shift-beats-the-bookings",
+        ),
+        pytest.param(
+            _booked_out_inside_the_lead_time,
+            {"treatment": "urgency", "after": MONDAY, "before": MONDAY},
+            "fully_booked",
+            id="bookings-beat-the-lead-time",
+        ),
+        pytest.param(
+            _morning_shift_inside_the_lead_time,
+            {"treatment": "urgency", "after": MONDAY, "before": MONDAY, "part_of_day": "afternoon"},
+            "within_lead_time",
+            id="the-lead-time-beats-the-part-of-day",
+        ),
+        pytest.param(
+            _morning_shift_with_a_busy_patient,
+            {
+                "treatment": "checkup",
+                "practitioner_id": "d1",
+                "after": TUESDAY,
+                "before": TUESDAY,
+                "part_of_day": "afternoon",
+                "patient_id": "pat_1",
+            },
+            "outside_part_of_day",
+            id="the-part-of-day-beats-a-busy-patient",
+        ),
+    ),
+)
+def test_the_first_rule_in_the_order_reports_the_day(
+    clinic: Clinic,
+    build: Callable[[Clinic], None],
+    search: dict[str, object],
+    expected: str,
+) -> None:
+    build(clinic)
+    result = search_slots(clinic.conn, now=NOW, **search)
+    assert result.slots == []
+    assert reason_codes(result, "d1") == [expected]
 
 
 def test_a_blocked_entry_always_has_a_reason(clinic: Clinic) -> None:
@@ -964,6 +1110,227 @@ def test_winter_appointment_blocks_the_local_hour(tmp_path: Path) -> None:
     starts = starts_on(result, day)
     assert "10:00" not in starts
     assert "11:00" in starts
+
+
+# --- clock changes, on a night shift ---------------------------------------
+#
+# A shift of 00:00-05:00 on the Sunday of a clock change crosses it: on the spring
+# Sunday 02:00-02:59 local never happens, on the autumn Sunday it happens twice.
+
+SPRING_SUNDAY = date(2027, 3, 28)
+AUTUMN_SUNDAY = date(2026, 10, 25)
+NIGHT = (("00:00", "05:00"),)
+BEFORE_SPRING = datetime(2027, 3, 20, 10, 0, tzinfo=MADRID)
+BEFORE_AUTUMN = datetime(2026, 10, 20, 10, 0, tzinfo=MADRID)
+NIGHT_STARTS = (
+    "00:00",
+    "00:15",
+    "00:30",
+    "00:45",
+    "01:00",
+    "01:15",
+    "01:30",
+    "01:45",
+    "03:00",
+    "03:15",
+    "03:30",
+    "03:45",
+    "04:00",
+)
+
+
+def night_shift(
+    path: Path, *, treatment: str = "extraction", hours: tuple[tuple[str, str], ...] = NIGHT
+) -> Clinic:
+    """A clinic whose only practitioner works Sundays through the night."""
+    clinic = Clinic(path)
+    clinic.practitioner("d1", treatments=(treatment,), hours=hours, weekdays=(6,))
+    return clinic
+
+
+def test_spring_never_offers_the_hour_that_does_not_exist(tmp_path: Path) -> None:
+    clinic = night_shift(tmp_path / "spring-night.db")
+    result = search_slots(
+        clinic.conn,
+        now=BEFORE_SPRING,
+        treatment="extraction",
+        after=SPRING_SUNDAY,
+        before=SPRING_SUNDAY,
+        limit=50,
+    )
+    starts = starts_on(result, SPRING_SUNDAY)
+    assert [start for start in starts if start.startswith("02:")] == []
+    assert tuple(starts) == NIGHT_STARTS
+    assert all(slot.end.astimezone(UTC) > slot.start.astimezone(UTC) for slot in result.slots)
+
+    # A slot may span the missing hour and keeps its real length while doing so: an
+    # hour from 01:30 ends at 03:30+02:00, sixty real minutes later.
+    spanning = next(slot for slot in result.slots if hhmm(slot.start) == "01:30")
+    assert spanning.start.isoformat() == "2027-03-28T01:30:00+01:00"
+    assert spanning.end.isoformat() == "2027-03-28T03:30:00+02:00"
+    assert spanning.end.astimezone(UTC) - spanning.start.astimezone(UTC) == timedelta(minutes=60)
+
+    for fold in (0, 1):
+        assert (
+            check_slot(
+                clinic.conn,
+                now=BEFORE_SPRING,
+                practitioner_id="d1",
+                treatment="extraction",
+                start=local(SPRING_SUNDAY, "02:15", fold),
+            )
+            == "slot_taken"
+        )
+
+
+def test_spring_a_slot_may_not_span_the_gap_past_the_end_of_the_shift(tmp_path: Path) -> None:
+    clinic = night_shift(tmp_path / "spring-short.db", hours=(("00:00", "03:00"),))
+    result = search_slots(
+        clinic.conn,
+        now=BEFORE_SPRING,
+        treatment="extraction",
+        after=SPRING_SUNDAY,
+        before=SPRING_SUNDAY,
+        limit=50,
+    )
+    # 01:00 still fits: it ends at 03:00+02:00, exactly when the shift does. 01:15 and
+    # later would end after it in real time, so they are not offered.
+    assert starts_on(result, SPRING_SUNDAY) == ["00:00", "00:15", "00:30", "00:45", "01:00"]
+    last = result.slots[-1]
+    assert last.end.isoformat() == "2027-03-28T03:00:00+02:00"
+
+
+def test_spring_urgency_lead_time_counts_real_minutes(tmp_path: Path) -> None:
+    clinic = night_shift(tmp_path / "spring-urgency.db", treatment="urgency")
+    now = local(SPRING_SUNDAY, "01:30")  # 00:30Z, one real hour before 03:30+02:00
+    for lead, first in ((60, "03:30"), (120, "04:30")):
+        result = search_slots(
+            clinic.conn,
+            now=now,
+            treatment="urgency",
+            after=SPRING_SUNDAY,
+            before=SPRING_SUNDAY,
+            limit=50,
+            urgency_lead_minutes=lead,
+        )
+        assert starts_on(result, SPRING_SUNDAY)[0] == first
+        assert all(slot.same_day for slot in result.slots)
+
+    # The same hour of lead time, slot by slot: 03:00+02:00 is half an hour away.
+    for start_hhmm, outcome in (("03:00", "too_soon"), ("03:30", None)):
+        assert (
+            check_slot(
+                clinic.conn,
+                now=now,
+                practitioner_id="d1",
+                treatment="urgency",
+                start=local(SPRING_SUNDAY, start_hhmm),
+                urgency_lead_minutes=60,
+            )
+            == outcome
+        )
+
+
+def test_autumn_never_offers_the_hour_that_happens_twice(tmp_path: Path) -> None:
+    clinic = night_shift(tmp_path / "autumn-night.db")
+    result = search_slots(
+        clinic.conn,
+        now=BEFORE_AUTUMN,
+        treatment="extraction",
+        after=AUTUMN_SUNDAY,
+        before=AUTUMN_SUNDAY,
+        limit=50,
+    )
+    starts = starts_on(result, AUTUMN_SUNDAY)
+    assert [start for start in starts if start.startswith("02:")] == []
+    assert tuple(starts) == NIGHT_STARTS
+    assert starts == sorted(set(starts))
+
+    # An hour from 01:45+02:00 ends in the first pass of 02:45, not the second.
+    before_change = next(slot for slot in result.slots if hhmm(slot.start) == "01:45")
+    assert before_change.start.isoformat() == "2026-10-25T01:45:00+02:00"
+    assert before_change.end.isoformat() == "2026-10-25T02:45:00+02:00"
+    after_change = next(slot for slot in result.slots if hhmm(slot.start) == "03:00")
+    assert after_change.start.isoformat() == "2026-10-25T03:00:00+01:00"
+    assert after_change.end.isoformat() == "2026-10-25T04:00:00+01:00"
+
+
+def test_autumn_check_slot_refuses_both_readings_of_the_repeated_hour(tmp_path: Path) -> None:
+    clinic = night_shift(tmp_path / "autumn-check.db")
+    first_pass = local(AUTUMN_SUNDAY, "02:15")
+    second_pass = local(AUTUMN_SUNDAY, "02:15", fold=1)
+    assert first_pass.astimezone(UTC) != second_pass.astimezone(UTC)
+    for start in (
+        first_pass,
+        second_pass,
+        datetime(2026, 10, 25, 1, 0, tzinfo=UTC),  # the second 02:00 local
+    ):
+        assert (
+            check_slot(
+                clinic.conn,
+                now=BEFORE_AUTUMN,
+                practitioner_id="d1",
+                treatment="extraction",
+                start=start,
+            )
+            == "slot_taken"
+        )
+    assert (
+        check_slot(
+            clinic.conn,
+            now=BEFORE_AUTUMN,
+            practitioner_id="d1",
+            treatment="extraction",
+            start=datetime(2026, 10, 25, 2, 0, tzinfo=UTC),  # 03:00+01:00, a slot of its own
+        )
+        is None
+    )
+
+
+def test_autumn_an_appointment_in_the_repeated_hour_blocks_its_own_instant(
+    tmp_path: Path,
+) -> None:
+    late = night_shift(tmp_path / "autumn-late.db")
+    late.appointment("d1", AUTUMN_SUNDAY, "02:15", treatment="extraction", fold=1)
+    assert late.conn.execute("SELECT start_utc FROM appointments").fetchone()[0] == (
+        "2026-10-25T01:15:00Z"
+    )
+    late_starts = starts_on(
+        search_slots(
+            late.conn,
+            now=BEFORE_AUTUMN,
+            treatment="extraction",
+            after=AUTUMN_SUNDAY,
+            before=AUTUMN_SUNDAY,
+            limit=50,
+        ),
+        AUTUMN_SUNDAY,
+    )
+    assert "03:00" not in late_starts  # 02:00Z to 03:00Z, over the appointment
+    assert "03:15" in late_starts  # starts the instant it ends
+    assert "01:30" in late_starts  # an hour from 23:30Z, nowhere near it
+    assert "01:45" in late_starts
+
+    early = night_shift(tmp_path / "autumn-early.db")
+    early.appointment("d1", AUTUMN_SUNDAY, "02:15", treatment="extraction", fold=0)
+    assert early.conn.execute("SELECT start_utc FROM appointments").fetchone()[0] == (
+        "2026-10-25T00:15:00Z"
+    )
+    early_starts = starts_on(
+        search_slots(
+            early.conn,
+            now=BEFORE_AUTUMN,
+            treatment="extraction",
+            after=AUTUMN_SUNDAY,
+            before=AUTUMN_SUNDAY,
+            limit=50,
+        ),
+        AUTUMN_SUNDAY,
+    )
+    assert "01:30" not in early_starts  # 23:30Z to 00:30Z, over the appointment
+    assert "01:45" not in early_starts
+    assert "01:15" in early_starts  # ends the instant it starts
+    assert "03:00" in early_starts  # an hour later in local time, but before it in real time
 
 
 # --- the seeded clinic -----------------------------------------------------

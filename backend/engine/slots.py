@@ -131,7 +131,10 @@ def search_slots(
     window = _window(today, treatment, after, before, horizon_days)
     diary = _load_diary(conn, practitioners, window, patient_id, exclude_appointment_id)
 
-    lead_cutoff = now_local + timedelta(minutes=urgency_lead_minutes)
+    # The lead time is real minutes, so it is measured on the UTC timeline: wall-clock
+    # arithmetic over a clock change is an hour out, and two datetimes sharing one
+    # ZoneInfo compare by wall clock, not by instant.
+    lead_cutoff = now.astimezone(UTC) + timedelta(minutes=urgency_lead_minutes)
     slots: list[Slot] = []
     blocked: list[Blocked] = []
 
@@ -139,7 +142,7 @@ def search_slots(
         found: list[Slot] = []
         reasons: dict[str, _ReasonDays] = {}
         for day in window.days():
-            starts, reason, until = _day_slots(
+            candidates, reason, until = _day_slots(
                 diary,
                 pid=pid,
                 day=day,
@@ -150,13 +153,13 @@ def search_slots(
                 part_of_day=part_of_day,
                 patient_id=patient_id,
             )
-            for start_min in starts:
+            for candidate in candidates:
                 found.append(
                     Slot(
                         practitioner_id=pid,
                         treatment=treatment,
-                        start=_local_dt(day, start_min),
-                        end=_local_dt(day, start_min + minutes),
+                        start=candidate.start.astimezone(MADRID),
+                        end=candidate.end.astimezone(MADRID),
                         same_day=day == today,
                     )
                 )
@@ -169,7 +172,7 @@ def search_slots(
             reasons.setdefault(BEYOND_HORIZON, _ReasonDays())
         blocked.append(Blocked(practitioner_id=pid, reasons=_order_reasons(reasons)))
 
-    slots.sort(key=lambda s: (s.start, s.practitioner_id))
+    slots.sort(key=lambda s: (s.start.astimezone(UTC), s.practitioner_id))
     return SlotSearch(
         slots=slots[:limit],
         blocked=blocked,
@@ -198,6 +201,8 @@ def check_slot(
     """
     now_local = _to_madrid(now)
     start_local = _to_madrid(start)
+    now_utc = now.astimezone(UTC)
+    start_utc = start.astimezone(UTC)
     today = now_local.date()
     day = start_local.date()
 
@@ -205,37 +210,42 @@ def check_slot(
     if practitioner_id not in _able_practitioners(conn, treatment):
         return "treatment_mismatch"
 
+    # A Madrid wall time the clocks skip is not an instant at all, yet converting it
+    # quietly moves it to one, so refuse it while the caller's own reading is still there.
+    wall = _madrid_reading(start)
+    if wall is not None and _instant(wall) is None:
+        return "slot_taken"
+
     if day == today:
         if treatment != URGENCY:
             return "same_day"
-        if start_local < now_local + timedelta(minutes=urgency_lead_minutes):
+        if start_utc < now_utc + timedelta(minutes=urgency_lead_minutes):
             return "too_soon"
-    elif day < today:
+    elif day < today or start_utc < now_utc:
         return "slot_taken"
     if day > today + timedelta(days=horizon_days):
         return "slot_taken"
 
-    start_min = start_local.hour * 60 + start_local.minute
-    if start_local.second or start_local.microsecond or start_min % GRID_MINUTES:
-        return "slot_taken"
-
     window = _Window(start=day, end=day, beyond_horizon=False)
     diary = _load_diary(conn, [practitioner_id], window, patient_id, exclude_appointment_id)
-    starts, _, _ = _day_slots(
+    candidates, _, _ = _day_slots(
         diary,
         pid=practitioner_id,
         day=day,
         minutes=minutes,
         is_today=day == today,
         treatment=treatment,
-        lead_cutoff=now_local,
+        lead_cutoff=now_utc,
         part_of_day=None,
         patient_id=None,
     )
-    if start_min not in starts:
+    # The instant must be one the search itself would offer. A start with the same wall
+    # clock but another offset is another instant, so it is not among them.
+    taken = next((c for c in candidates if c.start == start_utc), None)
+    if taken is None:
         return "slot_taken"
     if patient_id is not None and _overlaps(
-        diary.patient_busy.get(day, ()), day, start_min, minutes
+        diary.patient_busy.get(day, ()), taken.start, taken.end
     ):
         return "patient_overlap"
     return None
@@ -343,8 +353,8 @@ def _load_diary(
             part_day[pid].append((*span, _minutes(start_at), _minutes(end_at), end_date))
 
     # One day of slack below, so an appointment that started the day before is still seen.
-    low = _utc_text(_local_dt(first - timedelta(days=1), 0))
-    high = _utc_text(_local_dt(last + timedelta(days=1), 0))
+    low = _utc_text(_wall(first - timedelta(days=1), 0).replace(tzinfo=MADRID))
+    high = _utc_text(_wall(last + timedelta(days=1), 0).replace(tzinfo=MADRID))
     for pid, aid, start_utc, end_utc in conn.execute(
         "SELECT practitioner_id, appointment_id, start_utc, end_utc FROM appointments"
         f" WHERE practitioner_id IN ({marks}) AND status = 'booked'"
@@ -354,7 +364,8 @@ def _load_diary(
         if aid == exclude_appointment_id:
             continue
         start, end = _parse_utc(start_utc), _parse_utc(end_utc)
-        booked.setdefault((pid, start.astimezone(MADRID).date()), []).append((start, end))
+        for busy_day in _local_days(start, end):
+            booked.setdefault((pid, busy_day), []).append((start, end))
 
     if patient_id is not None:
         for aid, start_utc, end_utc in conn.execute(
@@ -365,12 +376,22 @@ def _load_diary(
             if aid == exclude_appointment_id:
                 continue
             start, end = _parse_utc(start_utc), _parse_utc(end_utc)
-            patient_busy.setdefault(start.astimezone(MADRID).date(), []).append((start, end))
+            for busy_day in _local_days(start, end):
+                patient_busy.setdefault(busy_day, []).append((start, end))
 
     return _Diary(hours, closures, whole_day, part_day, booked, patient_busy)
 
 
 # --- one practitioner on one day -------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Candidate:
+    """One possible start: the wall-clock minute of the day it reads, and its instants."""
+
+    start_min: int
+    start: datetime  # UTC
+    end: datetime  # UTC
 
 
 def _day_slots(
@@ -384,8 +405,8 @@ def _day_slots(
     lead_cutoff: datetime,
     part_of_day: str | None,
     patient_id: str | None,
-) -> tuple[list[int], str | None, str | None]:
-    """Surviving start minutes, plus the reason (and `until`) that removed the last one."""
+) -> tuple[list[_Candidate], str | None, str | None]:
+    """Surviving candidates, plus the reason (and `until`) that removed the last one."""
     if day.isoformat() in diary.closures:
         return [], CLINIC_CLOSED, None
 
@@ -393,16 +414,16 @@ def _day_slots(
     if until is not None:
         return [], ABSENT, until
 
-    starts = _grid_starts(diary.hours.get(pid, {}).get(day.weekday(), ()), minutes)
+    starts = _candidates(day, diary.hours.get(pid, {}).get(day.weekday(), ()), minutes)
     if not starts:
         return [], NOT_WORKING_THAT_DAY, None
 
-    kept: list[int] = []
+    kept: list[_Candidate] = []
     absence_until: str | None = None
-    for start_min in starts:
-        hit = _part_day_absence(diary, pid, day, start_min, minutes)
+    for candidate in starts:
+        hit = _part_day_absence(diary, pid, day, candidate)
         if hit is None:
-            kept.append(start_min)
+            kept.append(candidate)
         elif absence_until is None or hit > absence_until:
             absence_until = hit
     if not kept:
@@ -410,38 +431,74 @@ def _day_slots(
     starts = kept
 
     busy = diary.booked.get((pid, day), ())
-    starts = [s for s in starts if not _overlaps(busy, day, s, minutes)]
+    starts = [c for c in starts if not _overlaps(busy, c.start, c.end)]
     if not starts:
         return [], FULLY_BOOKED, None
 
     if is_today and treatment == URGENCY:
-        starts = [s for s in starts if _local_dt(day, s) >= lead_cutoff]
+        starts = [c for c in starts if c.start >= lead_cutoff]
         if not starts:
             return [], WITHIN_LEAD_TIME, None
 
     if part_of_day is not None:
         noon = _minutes(AFTERNOON_STARTS)
-        starts = [s for s in starts if (s < noon) == (part_of_day == "morning")]
+        starts = [c for c in starts if (c.start_min < noon) == (part_of_day == "morning")]
         if not starts:
             return [], OUTSIDE_PART_OF_DAY, None
 
     if patient_id is not None:
         patient_busy = diary.patient_busy.get(day, ())
-        starts = [s for s in starts if not _overlaps(patient_busy, day, s, minutes)]
+        starts = [c for c in starts if not _overlaps(patient_busy, c.start, c.end)]
         if not starts:
             return [], PATIENT_BUSY, None
 
     return starts, None, None
 
 
-def _grid_starts(intervals: Any, minutes: int) -> list[int]:
-    out: list[int] = []
-    for start_min, end_min in intervals:
+def _candidates(day: date, intervals: Any, minutes: int) -> list[_Candidate]:
+    """Every start the grid offers that day, each one once, earliest instant first.
+
+    Overlapping, touching or repeated `working_hours` rows are merged into disjoint
+    intervals before the grid is laid out, so a treatment may run across the join of
+    two of them (09:00-12:00 with 11:30-13:00 offers an hour from 11:30) and every
+    start, kept in a set, is offered once however many rows cover it.
+
+    A start whose Madrid wall clock does not exist or happens twice that day is skipped.
+    Length is real minutes on the UTC timeline, so a slot may span the hour the spring
+    change skips: 01:30 plus an hour ends at 03:30+02:00, one real hour later. Such a
+    slot is kept, and dropped only when that real end passes the end of the shift.
+    """
+    by_instant: dict[datetime, int] = {}
+    for start_min, end_min in _merge_intervals(intervals):
         first = -(-start_min // GRID_MINUTES) * GRID_MINUTES
-        for candidate in range(first, end_min - minutes + 1, GRID_MINUTES):
-            out.append(candidate)
-    out.sort()
-    return out
+        for candidate_min in range(first, end_min - minutes + 1, GRID_MINUTES):
+            start = _instant(_wall(day, candidate_min))
+            if start is None:
+                continue
+            end = start + timedelta(minutes=minutes)
+            if _wall_minutes(day, end.astimezone(MADRID)) > end_min:
+                continue
+            by_instant[start] = candidate_min
+    return [
+        _Candidate(
+            start_min=by_instant[start],
+            start=start,
+            end=start + timedelta(minutes=minutes),
+        )
+        for start in sorted(by_instant)
+    ]
+
+
+def _merge_intervals(intervals: Any) -> list[tuple[int, int]]:
+    """Working hours as disjoint wall-clock intervals: overlapping or touching rows join."""
+    merged: list[tuple[int, int]] = []
+    for start_min, end_min in sorted(intervals):
+        if merged and start_min <= merged[-1][1]:
+            joined_start, joined_end = merged[-1]
+            merged[-1] = (joined_start, max(joined_end, end_min))
+        else:
+            merged.append((start_min, end_min))
+    return merged
 
 
 def _whole_day_absence(diary: _Diary, pid: str, day: date) -> str | None:
@@ -452,23 +509,21 @@ def _whole_day_absence(diary: _Diary, pid: str, day: date) -> str | None:
     return until
 
 
-def _part_day_absence(
-    diary: _Diary, pid: str, day: date, start_min: int, minutes: int
-) -> str | None:
+def _part_day_absence(diary: _Diary, pid: str, day: date, candidate: _Candidate) -> str | None:
     """The `until` of the part-day absence hiding this candidate, or None when it is free."""
     until: str | None = None
+    end_min = _wall_minutes(day, candidate.end.astimezone(MADRID))
     for start_date, end_date, from_min, to_min, end_text in diary.part_day_absences.get(pid, ()):
         covered = (
-            start_date <= day <= end_date and start_min < to_min and start_min + minutes > from_min
+            start_date <= day <= end_date and candidate.start_min < to_min and end_min > from_min
         )
         if covered and (until is None or end_text > until):
             until = end_text
     return until
 
 
-def _overlaps(busy: Any, day: date, start_min: int, minutes: int) -> bool:
-    start = _local_dt(day, start_min)
-    end = _local_dt(day, start_min + minutes)
+def _overlaps(busy: Any, start: datetime, end: datetime) -> bool:
+    """True when a booked span covers part of [start, end). Every datetime here is UTC."""
     return any(b_start < end and b_end > start for b_start, b_end in busy)
 
 
@@ -544,10 +599,47 @@ def _to_madrid(value: datetime) -> datetime:
     return value.astimezone(MADRID)
 
 
-def _local_dt(day: date, minute_of_day: int) -> datetime:
+def _wall(day: date, minute_of_day: int) -> datetime:
+    """A Madrid wall-clock reading, as minutes past midnight; it may pass midnight."""
     whole_days, rest = divmod(minute_of_day, _MINUTES_PER_DAY)
     day += timedelta(days=whole_days)
-    return datetime(day.year, day.month, day.day, rest // 60, rest % 60, tzinfo=MADRID)
+    return datetime(day.year, day.month, day.day, rest // 60, rest % 60)  # noqa: DTZ001
+
+
+def _wall_minutes(day: date, moment: datetime) -> int:
+    """A Madrid time read as minutes past midnight of `day`, which it may pass."""
+    return (moment.date() - day).days * _MINUTES_PER_DAY + moment.hour * 60 + moment.minute
+
+
+def _instant(wall: datetime) -> datetime | None:
+    """The UTC instant of a Madrid wall-clock reading, or None when it is no instant.
+
+    On a clock-change day the two `fold` readings of a wall time disagree on the offset,
+    and the reading either does not exist (the spring change skips it, so it comes back
+    as another time from a round trip through UTC) or happens twice (the autumn change
+    repeats it). Neither can be a slot, so both give None; no date is written down here.
+    """
+    early = wall.replace(tzinfo=MADRID)
+    late = wall.replace(tzinfo=MADRID, fold=1)
+    moment = early.astimezone(UTC)
+    exists = moment.astimezone(MADRID).replace(tzinfo=None) == wall
+    repeated = early.utcoffset() != late.utcoffset()
+    if not exists or repeated:
+        return None
+    return moment
+
+
+def _madrid_reading(moment: datetime) -> datetime | None:
+    """The caller's own wall clock, when they gave a Europe/Madrid time; else None."""
+    tz = moment.tzinfo
+    if isinstance(tz, ZoneInfo) and tz.key == "Europe/Madrid":
+        return moment.replace(tzinfo=None)
+    return None
+
+
+def _local_days(start: datetime, end: datetime) -> set[date]:
+    """The Madrid dates a booked span touches, so one over midnight is seen on both."""
+    return {start.astimezone(MADRID).date(), end.astimezone(MADRID).date()}
 
 
 def _minutes(hhmm: str) -> int:
