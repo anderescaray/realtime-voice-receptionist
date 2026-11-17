@@ -573,7 +573,7 @@ def test_call_removed_while_listing(
 
     def vanishing(path: Path) -> tuple[list[dict], int]:
         if path.name.startswith("2d2d"):
-            raise FileNotFoundError(path)
+            path.unlink(missing_ok=True)  # purged after stat(), before the read
         return real(path)
 
     monkeypatch.setattr(console_api, "parse_jsonl", vanishing)
@@ -632,3 +632,46 @@ def test_overview_skips_p50_of_calls_without_answered_turns(
     assert lat["call_p50_ms"] == {"p50": None, "p90": None, "n_calls": 0}
     assert lat["unanswered"] == 2
     assert "0 ms" not in lat["text"]
+
+
+def test_overflowing_numbers(client: TestClient, dirs: tuple[Path, Path, Path]) -> None:
+    calls, _rec, _db = dirs
+    huge = "9" * 400
+    (calls).mkdir(parents=True, exist_ok=True)
+    (calls / "9e9e9e9e9e9e.jsonl").write_text(
+        '{"t": 0, "kind": "call_started", "schema": 1}\n'
+        '{"t": 1, "kind": "x", "v": 1e999}\n'
+        f'{{"t": 2, "kind": "audio_metrics", "turns": {huge}, "answered_turns": 1, '
+        f'"overlapped_turns": 0, "latency_p50_ms": {huge}, "dead_air_secs": {huge}}}\n',
+        encoding="utf-8",
+    )
+    detail = client.get("/api/calls/9e9e9e9e9e9e")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["summary"]["counts"]["bad_lines"] == 1
+    assert body["latency"]["unanswered"] == 0
+    assert body["latency"]["p50_ms"] is None
+    assert client.get("/api/overview").status_code == 200
+    assert client.get("/api/calls").status_code == 200
+
+
+def test_missing_percentile_with_answered_turns_prints_na(
+    client: TestClient, dirs: tuple[Path, Path, Path]
+) -> None:
+    calls, _rec, _db = dirs
+    fx.write_call(
+        calls,
+        "aeaeaeaeaeae",
+        [
+            {"t": 0, "kind": "call_started", "schema": 1},
+            {
+                "t": 9,
+                "kind": "audio_metrics",
+                "turns": 3,
+                "answered_turns": 3,
+                "overlapped_turns": 0,
+            },
+        ],
+    )
+    lat = client.get("/api/calls/aeaeaeaeaeae").json()["latency"]
+    assert lat["text"] == "p50 n/a / p90 n/a ms (n = 3 answered, overlap 0%, 0 unanswered)"

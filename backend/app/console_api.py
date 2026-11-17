@@ -44,7 +44,11 @@ def _num(value: Any) -> float | None:
     """A finite number from a log field, or None for anything else (bools included)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value) if math.isfinite(value) else None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _count(value: Any) -> int:
@@ -59,6 +63,18 @@ def _str(value: Any) -> str | None:
 
 def _reject_constant(name: str) -> Any:
     raise ValueError(f"non-finite number {name}")
+
+
+def _finite_float(text: str) -> float:
+    number = float(text)
+    if not math.isfinite(number):
+        raise ValueError(f"non-finite number {text}")
+    return number
+
+
+def _loads(text: str) -> Any:
+    """json.loads that refuses NaN, Infinity and overflowing floats such as 1e999."""
+    return json.loads(text, parse_constant=_reject_constant, parse_float=_finite_float)
 
 
 def _instant(iso: str | None) -> float | None:
@@ -104,16 +120,16 @@ def parse_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
 
     A call still being written may end with a half line; it is skipped like any
     other line that is not a JSON object with a numeric `t` and a string `kind`.
+    Raises OSError when the file cannot be read (for example, it was just purged).
     """
     events: list[dict[str, Any]] = []
     bad_lines = 0
-    if not path.is_file():
-        return events, bad_lines
+    # Read in one call, so a file removed meanwhile raises instead of looking empty.
     for line in path.read_text(encoding="utf-8", errors="replace").split("\n"):
         if not line.strip():
             continue
         try:
-            obj = json.loads(line, parse_constant=_reject_constant)
+            obj = _loads(line)
         except ValueError:
             bad_lines += 1
             continue
@@ -244,9 +260,7 @@ def _safe_child_file(base: Path, call_id: str, suffix: str) -> Path | None:
 def _read_timing(path: Path) -> dict[str, Any] | None:
     """The timing file as an object, or None when it is unreadable or not an object."""
     try:
-        data = json.loads(
-            path.read_text(encoding="utf-8", errors="replace"), parse_constant=_reject_constant
-        )
+        data = _loads(path.read_text(encoding="utf-8", errors="replace"))
     except (ValueError, OSError):
         return None
     return data if isinstance(data, dict) else None
