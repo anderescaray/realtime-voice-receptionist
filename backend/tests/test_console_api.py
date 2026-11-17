@@ -563,8 +563,16 @@ def test_bad_recording_artifacts(client: TestClient, dirs: tuple[Path, Path, Pat
     assert client.get(f"/api/calls/{cid}").json()["summary"]["audio"]["secs"] is None
 
 
-def test_call_removed_while_listing(
-    client: TestClient, dirs: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("route", "expected_status"),
+    [("/api/calls", 200), ("/api/overview", 200), ("/api/calls/2d2d2d2d2d2d", 404)],
+)
+def test_call_removed_while_reading(
+    client: TestClient,
+    dirs: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    route: str,
+    expected_status: int,
 ) -> None:
     calls, _rec, _db = dirs
     for cid in ("2d2d2d2d2d2d", "3e3e3e3e3e3e"):
@@ -577,10 +585,12 @@ def test_call_removed_while_listing(
         return real(path)
 
     monkeypatch.setattr(console_api, "parse_jsonl", vanishing)
-    listing = client.get("/api/calls").json()
-    assert [c["call_id"] for c in listing["calls"]] == ["3e3e3e3e3e3e"]
-    assert client.get("/api/overview").status_code == 200
-    assert client.get("/api/calls/2d2d2d2d2d2d").status_code == 404
+    r = client.get(route)
+    assert r.status_code == expected_status
+    if route == "/api/calls":
+        assert [c["call_id"] for c in r.json()["calls"]] == ["3e3e3e3e3e3e"]
+    if route == "/api/overview":
+        assert r.json()["calls"]["total"] == 1
 
 
 def test_sorted_by_instant_across_offsets(
