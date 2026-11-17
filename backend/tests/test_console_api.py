@@ -77,8 +77,8 @@ def test_complete_call(client: TestClient, dirs: tuple[Path, Path, Path]) -> Non
     assert detail["audio_metrics"]["latency_p50_ms"] == 1200
     lat = detail["latency"]
     assert lat["overlap_rate"] == pytest.approx(2 / 10)
-    assert lat["unanswered"] == 0
-    assert lat["text"] == "p50 1200 / p90 2100 ms (n = 8 answered, overlap 20%, 0 unanswered)"
+    assert lat["unanswered"] == 1
+    assert lat["text"] == "p50 1200 / p90 2100 ms (n = 8 answered, overlap 20%, 1 unanswered)"
     assert detail["timing"]["rate"] == 24000
     assert detail["db"]["changes"][0]["call_id"] == cid
 
@@ -92,6 +92,7 @@ def test_zero_answered_turns_latency(client: TestClient, dirs: tuple[Path, Path,
             e["answered_turns"] = 0
             e["overlapped_turns"] = 0
             e["turns"] = 3
+            e["unanswered_turns"] = 3
     fx.write_call(calls, cid, ev)
     lat = client.get(f"/api/calls/{cid}").json()["latency"]
     assert lat["p50_ms"] is None
@@ -631,6 +632,7 @@ def test_overview_skips_p50_of_calls_without_answered_turns(
                 "t": 9,
                 "kind": "audio_metrics",
                 "turns": 2,
+                "unanswered_turns": 2,
                 "answered_turns": 0,
                 "overlapped_turns": 0,
                 "latency_p50_ms": 1200,
@@ -659,7 +661,7 @@ def test_overflowing_numbers(client: TestClient, dirs: tuple[Path, Path, Path]) 
     assert detail.status_code == 200
     body = detail.json()
     assert body["summary"]["counts"]["bad_lines"] == 1
-    assert body["latency"]["unanswered"] == 0
+    assert body["latency"]["unanswered"] is None
     assert body["latency"]["p50_ms"] is None
     assert client.get("/api/overview").status_code == 200
     assert client.get("/api/calls").status_code == 200
@@ -684,4 +686,47 @@ def test_missing_percentile_with_answered_turns_prints_na(
         ],
     )
     lat = client.get("/api/calls/aeaeaeaeaeae").json()["latency"]
-    assert lat["text"] == "p50 n/a / p90 n/a ms (n = 3 answered, overlap 0%, 0 unanswered)"
+    assert lat["text"] == "p50 n/a / p90 n/a ms (n = 3 answered, overlap 0%, unanswered unknown)"
+
+
+def test_unanswered_comes_only_from_the_recorder(
+    client: TestClient, dirs: tuple[Path, Path, Path]
+) -> None:
+    calls, _rec, _db = dirs
+    base = {"t": 9, "kind": "audio_metrics", "answered_turns": 4, "overlapped_turns": 1}
+    base |= {"latency_p50_ms": 1000, "latency_p90_ms": 1500}
+    fx.write_call(
+        calls,
+        "b1b1b1b1b1b1",
+        [
+            {"t": 0, "kind": "call_started", "now": "2026-11-10T09:00:00+01:00"},
+            base | {"turns": 7, "unanswered_turns": 1},
+        ],
+    )
+    fx.write_call(
+        calls,
+        "c2c2c2c2c2c2",
+        [{"t": 0, "kind": "call_started", "now": "2026-11-10T10:00:00+01:00"}, base | {"turns": 9}],
+    )
+    known = client.get("/api/calls/b1b1b1b1b1b1").json()["latency"]
+    assert known["unanswered"] == 1  # not 7 - 4 - 1
+    missing = client.get("/api/calls/c2c2c2c2c2c2").json()["latency"]
+    assert missing["unanswered"] is None
+    assert (
+        missing["text"]
+        == "p50 1000 / p90 1500 ms (n = 4 answered, overlap 20%, unanswered unknown)"
+    )
+    for bad in ("x", -1, 1.5, True):
+        fx.write_call(
+            calls,
+            "d3d3d3d3d3d3",
+            [{"t": 0, "kind": "call_started"}, base | {"turns": 5, "unanswered_turns": bad}],
+        )
+        assert client.get("/api/calls/d3d3d3d3d3d3").json()["latency"]["unanswered"] is None
+    (calls / "d3d3d3d3d3d3.jsonl").unlink()
+    pooled = client.get("/api/overview").json()["latency"]
+    assert pooled["unanswered"] is None
+    assert "unanswered unknown" in pooled["text"]
+    (calls / "c2c2c2c2c2c2.jsonl").unlink()
+    pooled = client.get("/api/overview").json()["latency"]
+    assert pooled["unanswered"] == 1

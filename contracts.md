@@ -535,6 +535,8 @@ The log is private: it holds transcripts and patient data. Only the console API 
 
 `greeting_secs`, `turns`, `answered_turns`, `overlapped_turns`, `overlap_rate`, `latency_p50_ms`, `latency_p90_ms`, `skipped_turns`, `guard_firings`, `dead_air_secs` (total gaps over 3 s with nobody speaking), `barge_ins`, `yield_p50_ms` (caller starts over agent → agent audio stops), `underruns`, `echo_transcripts` (§7.7), `transcripts_missing` (§5.11).
 
+`unanswered_turns`: caller turns the agent did not answer, as defined in §13 (the silence guard fired, or the turn was skipped), each turn counted once even when both happened. The recorder computes it; readers never derive it from `turns`, `answered_turns` and `overlapped_turns`. (Added for CO-01; to build in VO-04.)
+
 ---
 
 ## 10. Database

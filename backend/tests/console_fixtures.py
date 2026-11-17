@@ -215,6 +215,7 @@ def complete_call_events(call_id: str = "aabbccddeeff") -> list[dict]:
             "kind": "audio_metrics",
             "greeting_secs": 1.2,
             "turns": 10,
+            "unanswered_turns": 1,  # from the recorder; deliberately not 10 - 8 - 2
             "answered_turns": 8,
             "overlapped_turns": 2,
             "overlap_rate": 0.2,

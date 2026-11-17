@@ -257,6 +257,16 @@ def _safe_child_file(base: Path, call_id: str, suffix: str) -> Path | None:
     return candidate
 
 
+def _unanswered(metrics: dict[str, Any]) -> int | None:
+    """The recorder's `unanswered_turns` (contracts.md §9.3), or None when absent or malformed.
+
+    Never derived from the other turn counts: a turn where the guard fired and that was
+    also skipped counts once, which only the recorder knows.
+    """
+    n = _num(metrics.get("unanswered_turns"))
+    return int(n) if n is not None and n >= 0 and n == int(n) else None
+
+
 def _read_timing(path: Path) -> dict[str, Any] | None:
     """The timing file as an object, or None when it is unreadable or not an object."""
     try:
@@ -284,14 +294,15 @@ def latency_text(
     p90: float | None,
     answered: int,
     overlapped: int,
-    unanswered: int,
+    unanswered: int | None,
     *,
     prefix: str = "",
     suffix: str = "",
 ) -> str:
     rate = _overlap_rate(answered, overlapped)
     otxt = _format_overlap_pct(rate)
-    core = f"n = {answered} answered, overlap {otxt}, {unanswered} unanswered"
+    utxt = "unanswered unknown" if unanswered is None else f"{unanswered} unanswered"
+    core = f"n = {answered} answered, overlap {otxt}, {utxt}"
     if answered == 0:
         return f"{prefix}no answered turns ({core}){suffix}".strip()
     p50_s = str(round(p50)) if p50 is not None else "n/a"
@@ -302,10 +313,9 @@ def latency_text(
 def build_latency_block(metrics: dict[str, Any]) -> dict[str, Any]:
     answered = _count(metrics.get("answered_turns"))
     overlapped = _count(metrics.get("overlapped_turns"))
-    turns = _count(metrics.get("turns"))
     skipped = _count(metrics.get("skipped_turns"))
     guard = _count(metrics.get("guard_firings"))
-    unanswered = max(turns - answered - overlapped, 0)
+    unanswered = _unanswered(metrics)
     rate = _overlap_rate(answered, overlapped)
     p50_f = _num(metrics.get("latency_p50_ms"))
     p90_f = _num(metrics.get("latency_p90_ms"))
@@ -721,7 +731,7 @@ def create_app(
 
         pooled_answered = 0
         pooled_overlapped = 0
-        pooled_unanswered = 0
+        pooled_unanswered: int | None = 0  # None once any call lacks unanswered_turns
         per_call_p50: list[float] = []
         n_calls_metrics = 0
         audio_sums = {
@@ -764,10 +774,13 @@ def create_app(
                 n_calls_metrics += 1
                 answered = _count(metrics.get("answered_turns"))
                 overlapped = _count(metrics.get("overlapped_turns"))
-                turns = _count(metrics.get("turns"))
                 pooled_answered += answered
                 pooled_overlapped += overlapped
-                pooled_unanswered += max(turns - answered - overlapped, 0)
+                unanswered = _unanswered(metrics)
+                if unanswered is None or pooled_unanswered is None:
+                    pooled_unanswered = None
+                else:
+                    pooled_unanswered += unanswered
                 p50 = _num(metrics.get("latency_p50_ms"))
                 if answered > 0 and p50 is not None:
                     per_call_p50.append(p50)
