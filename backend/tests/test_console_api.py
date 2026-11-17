@@ -505,3 +505,130 @@ def test_appointments_compact_date_normalised(
     assert b["date"] == "2026-10-25"
     assert b["absences"] == a["absences"]
     assert b["appointments"] == a["appointments"]
+
+
+def test_odd_field_types_do_not_crash(client: TestClient, dirs: tuple[Path, Path, Path]) -> None:
+    calls, _rec, _db = dirs
+    fx.write_call(
+        calls,
+        "0a0a0a0a0a0a",
+        [
+            {"t": 0, "kind": "call_started", "schema": "one", "now": ["x"], "channel": 5},
+            {"t": 1, "kind": "outcome", "result": 3, "changes": "x", "flags": [1, "emergency"]},
+            {
+                "t": 2,
+                "kind": "audio_metrics",
+                "turns": {},
+                "answered_turns": "4",
+                "overlapped_turns": None,
+                "latency_p50_ms": "fast",
+                "dead_air_secs": "bad",
+                "barge_ins": True,
+            },
+            {"t": 3, "kind": "call_ended", "duration_secs": "long"},
+        ],
+    )
+    (calls / "0b0b0b0b0b0b.jsonl").write_text(
+        '{"t": NaN, "kind": "call_started"}\n{"t": 1, "kind": "x", "v": Infinity}\n',
+        encoding="utf-8",
+    )
+    listing = client.get("/api/calls")
+    assert listing.status_code == 200
+    by_id = {c["call_id"]: c for c in listing.json()["calls"]}
+    odd = by_id["0a0a0a0a0a0a"]
+    assert odd["started_at"] is None and odd["channel"] is None and odd["duration_secs"] is None
+    assert odd["outcome"]["changes"] == [] and odd["flags"] == ["emergency"]
+    assert by_id["0b0b0b0b0b0b"]["counts"]["bad_lines"] == 2
+    detail = client.get("/api/calls/0a0a0a0a0a0a")
+    assert detail.status_code == 200
+    assert detail.json()["latency"]["answered"] == 0
+    overview = client.get("/api/overview")
+    assert overview.status_code == 200
+    assert overview.json()["audio"]["dead_air_secs"] == 0
+
+
+def test_bad_recording_artifacts(client: TestClient, dirs: tuple[Path, Path, Path]) -> None:
+    calls, rec, _db = dirs
+    cid = "1c1c1c1c1c1c"
+    fx.write_call(calls, cid, [{"t": 0, "kind": "call_started", "schema": 1}])
+    rec.mkdir(parents=True, exist_ok=True)
+    (rec / f"{cid}.wav").write_bytes(b"")
+    (rec / f"{cid}.timing.json").write_text("[1, 2]", encoding="utf-8")
+    body = client.get(f"/api/calls/{cid}")
+    assert body.status_code == 200
+    assert body.json()["summary"]["audio"] == {"available": True, "secs": None}
+    assert body.json()["timing"] is None
+    assert client.get(f"/api/calls/{cid}/timing").status_code == 404
+    (rec / f"{cid}.wav").write_bytes(b"RIFF\x24\x00\x00\x00WAVEfmt ")
+    assert client.get(f"/api/calls/{cid}").json()["summary"]["audio"]["secs"] is None
+
+
+def test_call_removed_while_listing(
+    client: TestClient, dirs: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls, _rec, _db = dirs
+    for cid in ("2d2d2d2d2d2d", "3e3e3e3e3e3e"):
+        fx.write_call(calls, cid, [{"t": 0, "kind": "call_started", "schema": 1}])
+    real = console_api.parse_jsonl
+
+    def vanishing(path: Path) -> tuple[list[dict], int]:
+        if path.name.startswith("2d2d"):
+            raise FileNotFoundError(path)
+        return real(path)
+
+    monkeypatch.setattr(console_api, "parse_jsonl", vanishing)
+    listing = client.get("/api/calls").json()
+    assert [c["call_id"] for c in listing["calls"]] == ["3e3e3e3e3e3e"]
+    assert client.get("/api/overview").status_code == 200
+    assert client.get("/api/calls/2d2d2d2d2d2d").status_code == 404
+
+
+def test_sorted_by_instant_across_offsets(
+    client: TestClient, dirs: tuple[Path, Path, Path]
+) -> None:
+    calls, _rec, _db = dirs
+    fx.write_call(
+        calls,
+        "4f4f4f4f4f4f",
+        [{"t": 0, "kind": "call_started", "now": "2026-11-10T10:00:00+02:00"}],
+    )
+    fx.write_call(
+        calls, "5a5a5a5a5a5a", [{"t": 0, "kind": "call_started", "now": "2026-11-10T09:00:00Z"}]
+    )
+    ids = [c["call_id"] for c in client.get("/api/calls").json()["calls"]]
+    assert ids == ["5a5a5a5a5a5a", "4f4f4f4f4f4f"]
+
+
+def test_symlink_alias_inside_recordings(client: TestClient, dirs: tuple[Path, Path, Path]) -> None:
+    calls, rec, _db = dirs
+    fx.write_wav(rec, "6b6b6b6b6b6b", 0.1)
+    fx.write_call(calls, "7c7c7c7c7c7c", [{"t": 0, "kind": "call_started", "schema": 1}])
+    (rec / "7c7c7c7c7c7c.wav").symlink_to(rec / "6b6b6b6b6b6b.wav")
+    assert client.get("/api/calls/7c7c7c7c7c7c/audio").status_code == 404
+    assert client.get("/api/calls/6b6b6b6b6b6b/audio").status_code == 200
+
+
+def test_overview_skips_p50_of_calls_without_answered_turns(
+    client: TestClient, dirs: tuple[Path, Path, Path]
+) -> None:
+    calls, _rec, _db = dirs
+    fx.write_call(
+        calls,
+        "8d8d8d8d8d8d",
+        [
+            {"t": 0, "kind": "call_started", "now": "2026-11-10T09:00:00+01:00"},
+            {
+                "t": 9,
+                "kind": "audio_metrics",
+                "turns": 2,
+                "answered_turns": 0,
+                "overlapped_turns": 0,
+                "latency_p50_ms": 1200,
+                "latency_p90_ms": 2100,
+            },
+        ],
+    )
+    lat = client.get("/api/overview").json()["latency"]
+    assert lat["call_p50_ms"] == {"p50": None, "p90": None, "n_calls": 0}
+    assert lat["unanswered"] == 2
+    assert "0 ms" not in lat["text"]

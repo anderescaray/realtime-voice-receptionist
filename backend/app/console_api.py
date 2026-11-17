@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -37,6 +38,40 @@ OUTCOME_FLAGS = frozenset(
 )
 
 CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+
+
+def _num(value: Any) -> float | None:
+    """A finite number from a log field, or None for anything else (bools included)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _count(value: Any) -> int:
+    """A non-negative whole count from a log field; anything malformed counts as 0."""
+    n = _num(value)
+    return int(n) if n is not None and n >= 0 else 0
+
+
+def _str(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _reject_constant(name: str) -> Any:
+    raise ValueError(f"non-finite number {name}")
+
+
+def _instant(iso: str | None) -> float | None:
+    """Seconds since the epoch for an ISO timestamp with an offset (or Z), else None."""
+    if iso is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.timestamp()
 
 
 def linear_percentile(values: list[float], p: float) -> float | None:
@@ -78,7 +113,7 @@ def parse_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
         if not line.strip():
             continue
         try:
-            obj = json.loads(line)
+            obj = json.loads(line, parse_constant=_reject_constant)
         except ValueError:
             bad_lines += 1
             continue
@@ -179,7 +214,7 @@ def _wav_secs(path: Path) -> float | None:
             if rate <= 0:
                 return None
             return wf.getnframes() / float(rate)
-    except wave.Error:
+    except (wave.Error, EOFError, OSError, ValueError):
         return None
 
 
@@ -195,12 +230,26 @@ def _safe_child_file(base: Path, call_id: str, suffix: str) -> Path | None:
     if not CALL_ID_RE.fullmatch(call_id):
         return None
     base_resolved = base.resolve()
-    candidate = (base / f"{call_id}{suffix}").resolve()
+    direct = base / f"{call_id}{suffix}"
+    if direct.is_symlink():
+        return None
+    candidate = direct.resolve()
     if not candidate.is_file():
         return None
     if candidate.parent != base_resolved:
         return None
     return candidate
+
+
+def _read_timing(path: Path) -> dict[str, Any] | None:
+    """The timing file as an object, or None when it is unreadable or not an object."""
+    try:
+        data = json.loads(
+            path.read_text(encoding="utf-8", errors="replace"), parse_constant=_reject_constant
+        )
+    except (ValueError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _overlap_rate(answered: int, overlapped: int) -> float | None:
@@ -231,23 +280,21 @@ def latency_text(
     core = f"n = {answered} answered, overlap {otxt}, {unanswered} unanswered"
     if answered == 0:
         return f"{prefix}no answered turns ({core}){suffix}".strip()
-    p50_i = int(round(p50)) if p50 is not None else 0
-    p90_i = int(round(p90)) if p90 is not None else 0
-    return f"{prefix}p50 {p50_i} / p90 {p90_i} ms ({core}){suffix}".strip()
+    p50_s = str(round(p50)) if p50 is not None else "n/a"
+    p90_s = str(round(p90)) if p90 is not None else "n/a"
+    return f"{prefix}p50 {p50_s} / p90 {p90_s} ms ({core}){suffix}".strip()
 
 
 def build_latency_block(metrics: dict[str, Any]) -> dict[str, Any]:
-    answered = int(metrics.get("answered_turns") or 0)
-    overlapped = int(metrics.get("overlapped_turns") or 0)
-    turns = int(metrics.get("turns") or 0)
-    skipped = int(metrics.get("skipped_turns") or 0)
-    guard = int(metrics.get("guard_firings") or 0)
+    answered = _count(metrics.get("answered_turns"))
+    overlapped = _count(metrics.get("overlapped_turns"))
+    turns = _count(metrics.get("turns"))
+    skipped = _count(metrics.get("skipped_turns"))
+    guard = _count(metrics.get("guard_firings"))
     unanswered = max(turns - answered - overlapped, 0)
     rate = _overlap_rate(answered, overlapped)
-    p50 = metrics.get("latency_p50_ms")
-    p90 = metrics.get("latency_p90_ms")
-    p50_f = float(p50) if isinstance(p50, (int, float)) else None
-    p90_f = float(p90) if isinstance(p90, (int, float)) else None
+    p50_f = _num(metrics.get("latency_p50_ms"))
+    p90_f = _num(metrics.get("latency_p90_ms"))
     if answered == 0:
         p50_f = None
         p90_f = None
@@ -278,12 +325,16 @@ def _last_audio_metrics(events: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _outcome_slice(ev: dict[str, Any] | None) -> dict[str, Any] | None:
     if ev is None:
         return None
+
+    def as_list(value: Any) -> list[Any]:
+        return value if isinstance(value, list) else []
+
     return {
-        "result": ev.get("result"),
-        "changes": ev.get("changes", []),
-        "no_action_reason": ev.get("no_action_reason"),
-        "escalations": ev.get("escalations", []),
-        "flags": ev.get("flags", []),
+        "result": _str(ev.get("result")),
+        "changes": as_list(ev.get("changes")),
+        "no_action_reason": _str(ev.get("no_action_reason")),
+        "escalations": as_list(ev.get("escalations")),
+        "flags": [f for f in as_list(ev.get("flags")) if isinstance(f, str)],
     }
 
 
@@ -307,12 +358,9 @@ def build_summary(
         elif kind == "outcome":
             outcome_ev = ev
 
-    started_at = started.get("now") if started else None
-    sort_key = started_at or (
-        datetime.fromtimestamp(file_mtime, tz=UTC).isoformat().replace("+00:00", "Z")
-        if file_mtime is not None
-        else ""
-    )
+    started_at = _str(started.get("now")) if started else None
+    instant = _instant(started_at)
+    sort_key = instant if instant is not None else (file_mtime or 0.0)
 
     flags: set[str] = _derive_flags_from_events(events)
     if outcome_ev and isinstance(outcome_ev.get("flags"), list):
@@ -323,15 +371,15 @@ def build_summary(
         flags.add("same_day_urgent")
 
     in_progress = call_ended is None
-    duration = call_ended.get("duration_secs") if call_ended else None
+    duration = _num(call_ended.get("duration_secs")) if call_ended else None
 
     return {
         "call_id": call_id,
         "started_at": started_at,
-        "channel": started.get("channel") if started else None,
-        "voice": started.get("voice") if started else None,
-        "language": started.get("language") if started else None,
-        "schema": started.get("schema") if started else None,
+        "channel": _str(started.get("channel")) if started else None,
+        "voice": _str(started.get("voice")) if started else None,
+        "language": _str(started.get("language")) if started else None,
+        "schema": _num(started.get("schema")) if started else None,
         "in_progress": in_progress,
         "duration_secs": duration,
         "ended_by": _ended_by(events),
@@ -397,12 +445,15 @@ def create_app(
         items: list[dict[str, Any]] = []
         for path in list_call_files(calls_dir):
             call_id = path.name[:-6]
-            events, bad = parse_jsonl(path)
-            mtime = path.stat().st_mtime
+            try:
+                mtime = path.stat().st_mtime
+                events, bad = parse_jsonl(path)
+            except OSError:
+                continue  # removed (e.g. purged) between listing and reading
             summary = build_summary(call_id, events, bad, recordings_dir, same_day, mtime)
             summary["_metrics"] = _last_audio_metrics(events)
             items.append(summary)
-        items.sort(key=lambda s: s.get("_sort_key", ""), reverse=True)
+        items.sort(key=lambda s: s["_sort_key"], reverse=True)
         return items
 
     @app.get("/api/calls")
@@ -452,20 +503,19 @@ def create_app(
         path = _safe_child_file(calls_dir, call_id, ".jsonl")
         if path is None:
             raise HTTPException(status_code=404, detail="call not found")
-        events, bad = parse_jsonl(path)
+        try:
+            mtime = path.stat().st_mtime
+            events, bad = parse_jsonl(path)
+        except OSError:
+            raise HTTPException(status_code=404, detail="call not found") from None
         same_day = _load_same_day_urgent(db_path)
-        summary = build_summary(
-            call_id, events, bad, recordings_dir, same_day, path.stat().st_mtime
-        )
+        summary = build_summary(call_id, events, bad, recordings_dir, same_day, mtime)
         metrics_ev = _last_audio_metrics(events)
         latency = build_latency_block(metrics_ev) if metrics_ev else None
         timing_path = _safe_child_file(recordings_dir, call_id, ".timing.json")
         timing = None
         if timing_path is not None:
-            try:
-                timing = json.loads(timing_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                timing = None
+            timing = _read_timing(timing_path)
         db_block = None
         try:
             with closing(connect_db_ro(db_path)) as conn:
@@ -523,10 +573,10 @@ def create_app(
         timing_path = _safe_child_file(recordings_dir, call_id, ".timing.json")
         if timing_path is None:
             raise HTTPException(status_code=404, detail="call not found")
-        try:
-            return json.loads(timing_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            raise HTTPException(status_code=404, detail="call not found") from None
+        timing = _read_timing(timing_path)
+        if timing is None:
+            raise HTTPException(status_code=404, detail="call not found")
+        return timing
 
     @app.get("/api/appointments")
     def appointments_by_date(
@@ -698,20 +748,20 @@ def create_app(
             metrics = s.get("_metrics")
             if metrics:
                 n_calls_metrics += 1
-                answered = int(metrics.get("answered_turns") or 0)
-                overlapped = int(metrics.get("overlapped_turns") or 0)
-                turns = int(metrics.get("turns") or 0)
+                answered = _count(metrics.get("answered_turns"))
+                overlapped = _count(metrics.get("overlapped_turns"))
+                turns = _count(metrics.get("turns"))
                 pooled_answered += answered
                 pooled_overlapped += overlapped
                 pooled_unanswered += max(turns - answered - overlapped, 0)
-                p50 = metrics.get("latency_p50_ms")
-                if isinstance(p50, (int, float)):
-                    per_call_p50.append(float(p50))
+                p50 = _num(metrics.get("latency_p50_ms"))
+                if answered > 0 and p50 is not None:
+                    per_call_p50.append(p50)
                 for key in audio_sums:
                     if key == "dead_air_secs":
-                        audio_sums[key] += float(metrics.get(key) or 0)
+                        audio_sums[key] += _num(metrics.get(key)) or 0.0
                     else:
-                        audio_sums[key] += int(metrics.get(key) or 0)
+                        audio_sums[key] += _count(metrics.get(key))
 
         pool_rate = _overlap_rate(pooled_answered, pooled_overlapped)
         call_p50 = linear_percentile(per_call_p50, 50)

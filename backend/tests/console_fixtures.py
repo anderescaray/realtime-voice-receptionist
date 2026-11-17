@@ -239,5 +239,5 @@ def complete_call_events(call_id: str = "aabbccddeeff") -> list[dict]:
             "derived": True,
         },
         {"t": 32.0, "kind": "call_ended", "duration_secs": 32.0},
-        {"t": 33.0, "kind": "latency", "heard_latency_ms": 900},
+        {"t": 33.0, "kind": "latency", "secs": 0.9},
     ]
