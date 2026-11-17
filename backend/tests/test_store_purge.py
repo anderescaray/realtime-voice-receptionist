@@ -29,6 +29,7 @@ from seed.build import DEFAULT_ANCHOR, DEFAULT_SEED, build_db
 from seed.timeutil import parse_local_date
 
 NOW = datetime(2026, 11, 16, 10, 0, tzinfo=MADRID)
+PURGE_NOW = datetime(2026, 11, 23, 10, 0, tzinfo=MADRID)  # the links expire exactly now
 SAVED_UTC = datetime(2026, 11, 16, 9, 5, tzinfo=UTC)
 _MSG_ID_RE = re.compile(r"^m_[0-9a-f]{8}$")
 _GOOD_HASH = "a" * 64
@@ -246,11 +247,18 @@ def test_purge_call_scenario(tmp_path: Path) -> None:
         saved_utc=SAVED_UTC,
     )
 
-    counts = purge_call(conn, "A")
-    assert counts["review_links"] == 1
-    assert counts["patients"] >= 1
-    assert counts["messages"] >= 1
-    assert counts["changes"] >= 3
+    counts = purge_call(conn, "A", now=PURGE_NOW)
+    assert counts == {
+        "appointments": 2,
+        "patients": 1,
+        "messages": 1,
+        "changes": 4,
+        "review_links": 1,
+    }
+    after = _table_counts(conn)
+    # Seeded rows are all still there (A's cancel only changed a status); B's booking stays.
+    assert after["appointments"] == before["appointments"] + 1
+    assert after["changes"] == before["changes"] + 1
 
     assert (
         conn.execute(
@@ -340,7 +348,7 @@ def test_purge_removes_later_booking_for_registered_patient(tmp_path: Path) -> N
         saved_utc=SAVED_UTC,
     )
 
-    purge_call(conn, "A")
+    purge_call(conn, "A", now=PURGE_NOW)
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM patients WHERE patient_id = ?", (patient_id,)
@@ -361,7 +369,7 @@ def test_purge_without_review_link(tmp_path: Path) -> None:
     conn = _seeded_db(tmp_path)
     before = _table_counts(conn)
     with pytest.raises(StoreError) as exc:
-        purge_call(conn, "B")
+        purge_call(conn, "B", now=PURGE_NOW)
     assert exc.value.code == "bad_change"
     assert exc.value.detail == "no review link"
     assert _table_counts(conn) == before
@@ -384,9 +392,53 @@ def test_second_purge_bad_change(tmp_path: Path) -> None:
         urgent=False,
         saved_utc=SAVED_UTC,
     )
-    purge_call(conn, "A")
+    purge_call(conn, "A", now=PURGE_NOW)
     after_first = _table_counts(conn)
     with pytest.raises(StoreError) as exc:
-        purge_call(conn, "A")
+        purge_call(conn, "A", now=PURGE_NOW)
     assert exc.value.code == "bad_change"
     assert _table_counts(conn) == after_first
+
+
+def test_purge_refuses_a_link_that_has_not_expired(tmp_path: Path) -> None:
+    conn = _seeded_db(tmp_path)
+    add_review_link(
+        conn, call_id="A", token_sha256="7" * 64, expires_utc=_madrid(2026, 11, 23, 10, 0)
+    )
+    add_message(
+        conn,
+        call_id="A",
+        name="Ana",
+        phone="+34111000001",
+        text="Llamar",
+        urgent=False,
+        saved_utc=SAVED_UTC,
+    )
+    before = _table_counts(conn)
+    with pytest.raises(StoreError) as caught:
+        purge_call(conn, "A", now=datetime(2026, 11, 23, 9, 59, tzinfo=MADRID))
+    assert caught.value.code == "bad_change"
+    assert _table_counts(conn) == before
+
+
+def test_a_purged_patient_number_is_never_minted_again(tmp_path: Path) -> None:
+    conn = _seeded_db(tmp_path)
+    staging = Staging("A")
+    first = staging.stage_register(
+        NewPatient(
+            first="Nadia", last1="Ortiz", last2=None, dob="1991-04-02", phone="+442079460901"
+        ),
+        "p_new1",
+    )
+    saved = save(conn, first, now=NOW, saved_utc=SAVED_UTC)
+    add_review_link(
+        conn, call_id="A", token_sha256="8" * 64, expires_utc=_madrid(2026, 11, 23, 10, 0)
+    )
+    purge_call(conn, "A", now=PURGE_NOW)
+    again = Staging("D").stage_register(
+        NewPatient(first="Omar", last1="Ruiz", last2=None, dob="1985-09-12", phone="+442079460902"),
+        "p_new1",
+    )
+    later = save(conn, again, now=NOW, saved_utc=SAVED_UTC)
+    assert later.patient_id != saved.patient_id
+    assert later.patient_id == f"p_{int(saved.patient_id[2:]) + 1:04d}"

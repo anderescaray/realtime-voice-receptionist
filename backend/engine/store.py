@@ -312,14 +312,28 @@ def _same_day_urgent(treatment_id: str, start: datetime, now: datetime) -> bool:
     return start_local == now_local
 
 
+_NEXT_PATIENT_KEY = "next_patient_n"
+
+
 def _next_patient_id(conn: sqlite3.Connection) -> str:
-    rows = conn.execute("SELECT patient_id FROM patients").fetchall()
+    """A patient number that never comes back, even after a purge deleted the newest patient.
+
+    The counter lives in `meta` and moves only forward, inside the caller's write
+    transaction; it also starts above every existing id, whatever its prefix.
+    """
     max_n = 0
-    for row in rows:
+    for row in conn.execute("SELECT patient_id FROM patients"):
         match = _PATIENT_ID_TAIL.search(str(row["patient_id"]))
         if match:
             max_n = max(max_n, int(match.group(1)))
-    return f"p_{max_n + 1:04d}"
+    stored = conn.execute("SELECT value FROM meta WHERE key = ?", (_NEXT_PATIENT_KEY,)).fetchone()
+    n = max(max_n + 1, int(stored["value"]) if stored is not None else 0)
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (_NEXT_PATIENT_KEY, str(n + 1)),
+    )
+    return f"p_{n:04d}"
 
 
 def _patient_exists(conn: sqlite3.Connection, patient: NewPatient) -> bool:
@@ -850,7 +864,8 @@ def save(
             after = _appointment_dict_from_row(after_row)
             patient_id = cancel.patient_id
             appointment_id = cancel.appointment_id
-            same_day_urgent = bool(after["same_day_urgent"])
+            # A cancel never raises the staff flag, whatever the row carried.
+            same_day_urgent = False
             change_ids.append(
                 _insert_change(
                     conn,
@@ -959,14 +974,18 @@ def expired_calls(conn: sqlite3.Connection, *, now: datetime) -> list[str]:
     return [str(row["call_id"]) for row in rows]
 
 
-def purge_call(conn: sqlite3.Connection, call_id: str) -> dict[str, int]:
+def purge_call(conn: sqlite3.Connection, call_id: str, *, now: datetime) -> dict[str, int]:
+    """Delete a public call's rows once its review link has expired (contracts §11)."""
+    _require_aware(now, "now")
     with _write_transaction(conn):
         link = conn.execute(
-            "SELECT 1 FROM review_links WHERE call_id = ?",
+            "SELECT expires_utc FROM review_links WHERE call_id = ?",
             (call_id,),
         ).fetchone()
         if link is None:
             raise StoreError("bad_change", "no review link")
+        if str(link["expires_utc"]) > utc_text(now):
+            raise StoreError("bad_change", "review link not expired yet")
         cur = conn.execute(
             """
             DELETE FROM appointments

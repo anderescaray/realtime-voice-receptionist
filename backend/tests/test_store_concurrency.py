@@ -470,6 +470,8 @@ def test_register_book_races_plain_book(db_path: Path) -> None:
         reg_patient = conn.execute(
             "SELECT COUNT(*) FROM patients WHERE created_by_call = 'race-reg'"
         ).fetchone()[0]
+        loser_codes = [o.code for o in outcomes if o.kind == "store_error"]
+        assert loser_codes == ["slot_taken"]
         if winner.result.kind == "book":
             assert reg_changes == 0
             assert reg_patient == 0
@@ -555,7 +557,22 @@ def test_move_races_book_into_target_slot(db_path: Path) -> None:
         move_won = any(
             o.kind == "ok" and o.result is not None and o.result.kind == "move" for o in outcomes
         )
-        if not move_won:
+        loser_codes = [o.code for o in outcomes if o.kind == "store_error"]
+        assert loser_codes == ["slot_taken"]
+        booked_at_target = conn.execute(
+            "SELECT COUNT(*) FROM appointments WHERE status = 'booked' AND start_utc = ?",
+            (utc_text(target),),
+        ).fetchone()[0]
+        assert booked_at_target == 1
+        if move_won:
+            assert row["start_utc"] == utc_text(target)
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM changes WHERE operation_key = 'bk:1'"
+                ).fetchone()[0]
+                == 0
+            )
+        else:
             assert row["start_utc"] == before["start_utc"]
             assert row["end_utc"] == before["end_utc"]
     finally:
@@ -707,3 +724,38 @@ def test_busy_writer_short_timeout_then_default(db_path: Path) -> None:
     after = conn.execute("SELECT COUNT(*) FROM appointments").fetchone()[0]
     conn.close()
     assert after == before + 1
+
+
+def test_same_register_book_key_from_four_threads(db_path: Path) -> None:
+    slot = _madrid(2027, 1, 18, 10, 0)
+    conn = open_db(db_path)
+    treatment = _treatment_for(conn, "dent_1")
+    conn.close()
+    pending = _pending_register_book(
+        call_id="retry-reg",
+        phone="+441111111109",
+        patient_id="p_new1",
+        practitioner_id="dent_1",
+        treatment=treatment,
+        start=slot,
+    )
+    outcomes = _race(db_path, [Competitor(pending) for _ in range(4)])
+    _assert_no_unexpected(outcomes)
+    results = [o.result for o in outcomes if o.result is not None]
+    assert len(results) == 4
+    assert sorted(r.already_saved for r in results) == [False, True, True, True]
+    assert len({(r.patient_id, r.appointment_id, tuple(r.change_ids)) for r in results}) == 1
+    conn = open_db(db_path)
+    try:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM patients WHERE created_by_call = 'retry-reg'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            conn.execute("SELECT COUNT(*) FROM changes WHERE call_id = 'retry-reg'").fetchone()[0]
+            == 2
+        )
+    finally:
+        conn.close()

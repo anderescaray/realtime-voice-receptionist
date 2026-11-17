@@ -458,6 +458,28 @@ def test_move_same_day_urgent_flag(tmp_path: Path) -> None:
     assert r2.same_day_urgent is False
 
 
+def test_cancelling_a_same_day_urgency_never_flags_the_call(tmp_path: Path) -> None:
+    conn = _seeded_db(tmp_path)
+    book = PendingChange(
+        operation_key="c1:1",
+        call_id="c1",
+        kind="book",
+        booking=Booking(
+            patient_id="p0005",
+            practitioner_id="dent_1",
+            treatment="urgency",
+            start=_madrid(2026, 11, 16, 13, 0),
+            end=_madrid(2026, 11, 16, 13, 30),
+        ),
+    )
+    booked = save(conn, book, now=NOW, saved_utc=SAVED_UTC)
+    assert booked.same_day_urgent is True
+    assert booked.appointment_id is not None
+    cancel = _pending_cancel(conn, booked.appointment_id, operation_key="c2:1", call_id="c2")
+    result = save(conn, cancel, now=NOW, saved_utc=SAVED_UTC)
+    assert result.same_day_urgent is False
+
+
 def test_store_unavailable_on_move(tmp_path: Path) -> None:
     db_path = tmp_path / "clinic.db"
     build_db(db_path, parse_local_date(DEFAULT_ANCHOR), DEFAULT_SEED)
