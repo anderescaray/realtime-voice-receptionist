@@ -8,12 +8,12 @@ re-priced when a provider changes its rates.
 """
 
 import json
-import statistics
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app import config
+from app.latency_report import OVERLAP_SECS, LatencySummary, pct, summarise
 
 PRICES_AS_OF = "2026-11-07"
 
@@ -89,8 +89,12 @@ class CallReport:
     unpriced: set[str] = field(default_factory=set)
     greeting: float | None = None
     latencies: list[float] = field(default_factory=list)  # server: caller silent -> audio out
-    heard: list[float] = field(default_factory=list)  # caller: stopped talking -> heard agent
+    heard_turns: list[float | None] = field(default_factory=list)
     turns: list[Turn] = field(default_factory=list)
+
+    @property
+    def heard_summary(self) -> LatencySummary:
+        return summarise(self.heard_turns)
 
     @property
     def usd(self) -> float:
@@ -157,13 +161,20 @@ def report(path: Path) -> CallReport:
         elif kind == "latency_breakdown" and e.get("measured_from") == "user_silence":
             last_breakdown = e
         elif kind == "heard_latency":
-            r.heard.append(e["secs"])
-            stages: dict[str, float] = {}
-            if last_breakdown and usable(last_breakdown) and e["t"] - last_breakdown["t"] < 3:
-                for stage in last_breakdown["stages"]:
-                    stages[stage["key"]] = stages.get(stage["key"], 0) + stage["secs"]
-            r.turns.append(Turn(heard=e["secs"], stages=stages))
-            last_breakdown = None
+            secs = e["secs"]
+            r.heard_turns.append(secs)
+            answered = not e.get("overlapped") and secs >= OVERLAP_SECS
+            if answered:
+                stages: dict[str, float] = {}
+                if last_breakdown and usable(last_breakdown) and e["t"] - last_breakdown["t"] < 3:
+                    for stage in last_breakdown["stages"]:
+                        stages[stage["key"]] = stages.get(stage["key"], 0) + stage["secs"]
+                r.turns.append(Turn(heard=secs, stages=stages))
+                last_breakdown = None
+            else:
+                last_breakdown = None
+        elif kind == "heard_unanswered":
+            r.heard_turns.append(None)
         elif kind == "usage" and e["service"] == "llm":
             r.input_tokens += e["input_tokens"]
             r.output_tokens += e["output_tokens"]
@@ -195,16 +206,17 @@ def report(path: Path) -> CallReport:
     return r
 
 
-def pct(values: list[float], q: int) -> float | None:
-    if not values:
-        return None
-    if len(values) == 1:
-        return values[0]
-    return statistics.quantiles(values, n=100, method="inclusive")[q - 1]
-
-
 def ms(value: float | None) -> str:
     return "-" if value is None else f"{value * 1000:.0f}"
+
+
+def _overlap_rate_cell(rs: list[CallReport]) -> str:
+    summaries = [r.heard_summary for r in rs]
+    if not any(s.overlapped or s.answered for s in summaries):
+        return "-"
+    overlapped = sum(s.overlapped for s in summaries)
+    denom = sum(s.overlapped + len(s.answered) for s in summaries)
+    return f"{round(100 * overlapped / max(denom, 1))}%"
 
 
 def group_table(reports: list[CallReport]) -> list[str]:
@@ -226,8 +238,7 @@ def group_table(reports: list[CallReport]) -> list[str]:
         rows.append(f"| {title} | " + " | ".join(cells) + " |")
 
     def turns(rs: list[CallReport]) -> list[Turn]:
-        # A negative time means the agent started before the caller finished: counted apart.
-        return [t for r in rs for t in r.turns if t.heard >= 0]
+        return [t for r in rs for t in r.turns if t.heard >= OVERLAP_SECS]
 
     row(
         "**Heard by the caller** (stops talking -> hears agent)",
@@ -263,8 +274,16 @@ def group_table(reports: list[CallReport]) -> list[str]:
             lambda rs: f"{len(turns(rs))} ({sum(1 for t in turns(rs) if t.stages)})",
         ),
         (
-            "agent spoke over the caller (turns)",
-            lambda rs: f"{sum(1 for r in rs for t in r.turns if t.heard < 0)}",
+            "overlapped turns",
+            lambda rs: f"{sum(s.overlapped for s in (r.heard_summary for r in rs))}",
+        ),
+        (
+            "overlap rate",
+            lambda rs: _overlap_rate_cell(rs),
+        ),
+        (
+            "unanswered turns",
+            lambda rs: f"{sum(s.unanswered for s in (r.heard_summary for r in rs))}",
         ),
         ("minutes", lambda rs: f"{sum(r.secs for r in rs) / 60:.1f}"),
         ("speech-to-text $/min", per_min("stt_usd")),
@@ -278,6 +297,12 @@ def group_table(reports: list[CallReport]) -> list[str]:
         ("total spent $", lambda rs: f"{sum(r.usd for r in rs):.4f}"),
     ]:
         rows.append(f"| {title} | " + " | ".join(fn(groups[n]) for n in names) + " |")
+    rows.append("")
+    for name in names:
+        hs = summarise(t for r in groups[name] for t in r.heard_turns)
+        ss = summarise(r.latencies for r in groups[name])
+        rows.append(hs.format("heard").replace("heard:", f"heard ({name}):"))
+        rows.append(ss.format("server").replace("server:", f"server ({name}):"))
     return rows
 
 
@@ -290,13 +315,12 @@ def main(argv: list[str]) -> None:
     print(
         f"Prices as of {PRICES_AS_OF}, at paid-tier rates (calls on a free tier were not billed).\n"
     )
-    print(
-        f"{'call':12} {'setup':28} {'secs':>5} {'turns':>5} {'heard p50':>9} {'$':>7} {'$/min':>7}"
-    )
+    print(f"{'call':12} {'setup':28} {'secs':>5} {'heard (§13)':<52} {'$':>7} {'$/min':>7}")
     for r in reports:
+        short = r.heard_summary.format("heard").removeprefix("heard: ")
         print(
-            f"{r.call_id:12} {r.label:28} {r.secs:5.0f} {len(r.heard):5} "
-            f"{ms(pct(r.heard, 50)):>9} {r.usd:7.4f} {r.usd_per_min:7.4f}"
+            f"{r.call_id:12} {r.label:28} {r.secs:5.0f} {short:<52} "
+            f"{r.usd:7.4f} {r.usd_per_min:7.4f}"
             + (f"  unpriced: {', '.join(sorted(r.unpriced))}" if r.unpriced else "")
         )
     print()

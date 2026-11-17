@@ -23,7 +23,6 @@ import asyncio
 import fractions
 import hashlib
 import json
-import statistics
 import time
 import urllib.request
 import wave
@@ -34,6 +33,7 @@ from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 from av import AudioFrame
 
 from app import config
+from app.latency_report import summarise
 from scripts import call_costs
 
 RATE = 48_000
@@ -256,7 +256,9 @@ def get(port: int, path: str) -> dict:
     return json.loads(urllib.request.urlopen(f"http://localhost:{port}{path}", timeout=10).read())
 
 
-async def one_call(port: int, voice: str, lines: list[np.ndarray]) -> tuple[str, list[float], Path]:
+async def one_call(
+    port: int, voice: str, lines: list[np.ndarray]
+) -> tuple[str, list[float | None], Path]:
     pc = RTCPeerConnection()
     mic, ear = CallerMic(), AgentEar()
     pc.addTransceiver(mic, direction="sendrecv")
@@ -282,7 +284,7 @@ async def one_call(port: int, voice: str, lines: list[np.ndarray]) -> tuple[str,
             await asyncio.sleep(1)
 
     pinger = asyncio.create_task(keepalive())
-    heard: list[float] = []
+    latencies: list[float | None] = []
     turns: list[dict] = []
     try:
         try:
@@ -297,9 +299,11 @@ async def one_call(port: int, voice: str, lines: list[np.ndarray]) -> tuple[str,
                 await asyncio.wait_for(ear.onset.wait(), ANSWER_TIMEOUT_SECS)
             except TimeoutError:
                 print("  no answer within the timeout")
+                turns.append({"spoke_until": round(ended, 3), "heard_at": None})
+                latencies.append(None)
                 continue
             secs = ear.onset_at - ended
-            heard.append(secs)
+            latencies.append(secs)
             turns.append({"spoke_until": round(ended, 3), "heard_at": round(ear.onset_at, 3)})
             await asyncio.to_thread(
                 post, port, "/api/heard", {"pc_id": answer["pc_id"], "secs": secs}
@@ -313,7 +317,7 @@ async def one_call(port: int, voice: str, lines: list[np.ndarray]) -> tuple[str,
     call_id = answer["call_id"]
     (CACHE / f"{call_id}.turns.json").write_text(json.dumps(turns))
     wav = save_stereo(RECORDINGS / voice / f"{call_id}.wav", mic.tape, ear.tape)
-    return call_id, heard, wav
+    return call_id, latencies, wav
 
 
 async def main() -> None:
@@ -326,7 +330,7 @@ async def main() -> None:
     voice_layer = (await asyncio.to_thread(get, args.port, "/health"))["voice"]
     expected = EXPECTED_USD_PER_CALL.get(voice_layer, 0.0)
     lines = voice_lines()
-    spent, done, all_heard = 0.0, [], []
+    spent, done, all_latencies = 0.0, [], []
     for i in range(args.calls):
         voice = CALLER_VOICES[i % len(CALLER_VOICES)]
         conversation = CONVERSATIONS[i % len(CONVERSATIONS)]
@@ -334,17 +338,18 @@ async def main() -> None:
         if spent + expected > args.max_usd:
             print(f"stopping: ${spent:.4f} spent, the next call could pass ${args.max_usd}")
             break
-        call_id, heard, wav = await one_call(args.port, voice_layer, pcms)
+        call_id, latencies, wav = await one_call(args.port, voice_layer, pcms)
         await asyncio.sleep(3)  # let the server close the call's log
         r = call_costs.report(Path(config.CALLS_DIR) / f"{call_id}.jsonl")
         spent += r.usd
         done.append(call_id)
-        all_heard += heard
-        ms = ", ".join(f"{h * 1000:.0f}" for h in heard)
-        print(f"call {i + 1} {call_id}: {r.secs:.0f}s, ${r.usd:.4f}, heard ms [{ms}]")
+        all_latencies.extend(latencies)
+        call_line = summarise(latencies).format("heard")
+        per_turn = ", ".join("-" if v is None else f"{v * 1000:.0f}" for v in latencies)
+        print(f"call {i + 1} {call_id}: {r.secs:.0f}s, ${r.usd:.4f}, {call_line}  [{per_turn} ms]")
         print(f"  recording: {wav.relative_to(config.ROOT)}")
-    median = f", heard median {statistics.median(all_heard) * 1000:.0f} ms" if all_heard else ""
-    print(f"VOICE={voice_layer}: {len(done)} calls, ${spent:.4f} at paid-tier rates{median}")
+    total_line = summarise(all_latencies).format("heard")
+    print(f"VOICE={voice_layer}: {len(done)} calls, ${spent:.4f} at paid-tier rates, {total_line}")
 
 
 if __name__ == "__main__":

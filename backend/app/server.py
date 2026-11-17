@@ -13,6 +13,7 @@ Routes:
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -100,7 +101,8 @@ async def offer(body: dict):
 
 class Heard(BaseModel):
     pc_id: str
-    secs: float
+    kind: Literal["turn", "overlap", "unanswered"] = "turn"
+    secs: float | None = None
 
 
 @app.post("/api/heard")
@@ -108,7 +110,16 @@ async def heard(body: Heard):
     session = ACTIVE.get(body.pc_id)
     if not session:
         raise HTTPException(404, "no active call")
-    session.log("heard_latency", secs=round(body.secs, 3))
+    if body.kind == "unanswered":
+        session.log("heard_unanswered")
+    elif body.kind == "overlap":
+        if body.secs is None:
+            raise HTTPException(422, "secs required for overlap")
+        session.log("heard_latency", secs=round(body.secs, 3), overlapped=True)
+    else:
+        if body.secs is None:
+            raise HTTPException(422, "secs required for turn")
+        session.log("heard_latency", secs=round(body.secs, 3))
     return {"ok": True}
 
 

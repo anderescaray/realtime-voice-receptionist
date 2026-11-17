@@ -14,6 +14,8 @@
 //   from the caller's last speech to that onset. Below `minLatencyMs` no pipeline can
 //   have answered: the agent started while the caller was still talking. That is
 //   reported as an overlap, not a latency.
+// - If the agent never answers within `unansweredMs` after the caller stops, the turn
+//   is unanswered (once), then disarmed until the caller speaks again.
 
 export const DEFAULTS = Object.freeze({
   youSpeaking: 0.02, // caller RMS above this is speech
@@ -24,7 +26,63 @@ export const DEFAULTS = Object.freeze({
   minSpeechMs: 250, // shortest caller speech that starts a turn
   speechGapMs: 600, // caller silence that ends one stretch of speech
   minLatencyMs: 150, // faster than this is an overlap, not an answer
+  unansweredMs: 8000, // caller silence without an answer ends the turn this way
 });
+
+const OVERLAP_SECS = 0.15;
+
+/** Same inclusive p-quantile as Python statistics.quantiles(..., n=100, method="inclusive"). */
+export function pct(values, q) {
+  if (!values.length) return null;
+  if (values.length === 1) return values[0];
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const k = (q * (n - 1)) / 100 + 1;
+  const f = Math.floor(k);
+  const c = Math.ceil(k);
+  if (f === c) return sorted[f - 1];
+  const weight = k - f;
+  return sorted[f - 1] * (1 - weight) + sorted[c - 1] * weight;
+}
+
+export function summarise(events) {
+  const answered = [];
+  let overlapped = 0;
+  let unanswered = 0;
+  for (const e of events) {
+    if (e.kind === "unanswered") {
+      unanswered += 1;
+      continue;
+    }
+    const secs = e.ms / 1000;
+    if (e.kind === "overlap" || secs < OVERLAP_SECS) {
+      overlapped += 1;
+    } else {
+      answered.push(secs);
+    }
+  }
+  const denom = answered.length + overlapped;
+  return {
+    answered,
+    overlapped,
+    unanswered,
+    p50: pct(answered, 50),
+    p90: pct(answered, 90),
+    overlapRate: denom ? (100 * overlapped) / denom : null,
+  };
+}
+
+export function formatSummary(summary, kind = "heard") {
+  const p50 = summary.p50 == null ? "-" : `${(summary.p50 * 1000).toFixed(0)}`;
+  const p90 = summary.p90 == null ? "-" : `${(summary.p90 * 1000).toFixed(0)}`;
+  const overlapS =
+    summary.overlapRate == null ? "-" : `${Math.round(summary.overlapRate)}%`;
+  let line = `${kind}: p50 ${p50} / p90 ${p90} ms (n = ${summary.answered.length} answered, overlap ${overlapS}, ${summary.unanswered} unanswered)`;
+  if (kind === "server") {
+    line += " (overlap not measured at the server)";
+  }
+  return line;
+}
 
 export class TurnMeter {
   constructor(options = {}) {
@@ -38,7 +96,7 @@ export class TurnMeter {
     this.armed = false;
   }
 
-  /** One tick. Returns {kind: "turn" | "overlap", ms} when a turn ends, else null. */
+  /** One tick. Returns {kind: "turn" | "overlap" | "unanswered", ms?} when a turn ends, else null. */
   update(now, you, agent) {
     const o = this.o;
     if (agent > o.agentAudible) this.lastAgentAudible = now;
@@ -58,7 +116,15 @@ export class TurnMeter {
     }
 
     let event = null;
-    if (agent > o.agentSpeaking) {
+    if (
+      this.armed &&
+      this.greeted &&
+      now - this.lastYouLoud >= o.unansweredMs
+    ) {
+      event = { kind: "unanswered" };
+      this.armed = false;
+      this.speechStart = null;
+    } else if (agent > o.agentSpeaking) {
       const onset = now - this.lastAgentLoud > o.agentGapMs;
       if (onset && !this.greetingStarted) {
         this.greetingStarted = true;

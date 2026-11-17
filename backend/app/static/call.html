@@ -17,13 +17,16 @@
   table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
   td, th { text-align: left; padding: .25rem .5rem; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
+  #summary { font-size: .9rem; }
 </style>
 </head>
 <body>
 <h1>Voice test call</h1>
 <p>Speak Spanish. Each time you stop talking, the page measures how long it takes
-until it hears the agent start answering. The greeting is not counted, and an answer
-that starts while you are still talking shows as an overlap, outside the median.</p>
+until it hears the agent start answering. The greeting is not counted. Answers that start
+while you are still talking, or within 150&nbsp;ms after you stop, count as overlaps;
+turns with no answer count separately. Latency percentiles include only answered turns;
+overlap rate and unanswered count are shown beside them.</p>
 
 <button id="call">Call</button>
 <span id="status">Not connected</span>
@@ -36,19 +39,23 @@ that starts while you are still talking shows as an overlap, outside the median.
 <table>
   <thead><tr><th>Turn</th><th class="num">Heard latency</th></tr></thead>
   <tbody id="turns"></tbody>
-  <tfoot><tr><th>Median</th><th class="num" id="median">–</th></tr></tfoot>
+  <tfoot><tr><th colspan="2" id="summary">heard: p50 - / p90 - ms (n = 0 answered, overlap 0%, 0 unanswered)</th></tr></tfoot>
 </table>
 <audio id="agent-audio" autoplay></audio>
 
 <script type="module">
-import { median, TurnMeter } from "/static/turns.js";
+import { TurnMeter, formatSummary, summarise } from "/static/turns.js";
 
 const $ = (id) => document.getElementById(id);
 let pc, mic, ping, raf, pcId, audioCtx, meter;
-const latencies = [];
+const events = [];
 let rows = 0;
 
 function setStatus(text) { $("status").textContent = text; }
+
+function refreshSummary() {
+  $("summary").textContent = formatSummary(summarise(events));
+}
 
 function analyser(stream) {
   const node = audioCtx.createAnalyser();
@@ -71,21 +78,28 @@ function addRow(label, text) {
   cell.textContent = text;
 }
 
-function recordTurn({ kind, ms }) {
-  rows += 1;
-  if (kind === "overlap") {
-    // The agent started while you were still talking: not a response time.
-    addRow(rows, "overlap");
-    return;
-  }
-  latencies.push(ms);
-  addRow(rows, `${ms.toFixed(0)} ms`);
-  $("median").textContent = `${median(latencies).toFixed(0)} ms`;
+function postHeard({ kind, ms }) {
+  const body = { pc_id: pcId, kind };
+  if (kind !== "unanswered") body.secs = ms / 1000;
   fetch("/api/heard", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pc_id: pcId, secs: ms / 1000 }),
+    body: JSON.stringify(body),
   }).catch(() => {});
+}
+
+function recordTurn(turn) {
+  rows += 1;
+  events.push(turn);
+  if (turn.kind === "overlap") {
+    addRow(rows, "overlap");
+  } else if (turn.kind === "unanswered") {
+    addRow(rows, "no answer");
+  } else {
+    addRow(rows, `${turn.ms.toFixed(0)} ms`);
+  }
+  refreshSummary();
+  if (pcId) postHeard(turn);
 }
 
 function watch(youLevel, agentLevel) {

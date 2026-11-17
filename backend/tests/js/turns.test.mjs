@@ -2,7 +2,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { median, TurnMeter } from "../../app/static/turns.js";
+import {
+  formatSummary,
+  median,
+  pct,
+  summarise,
+  TurnMeter,
+} from "../../app/static/turns.js";
+
+// Same latencies as tests/test_latency_report.py SHARED_LATENCIES (as browser events).
+const SHARED_EVENTS = [
+  { kind: "turn", ms: 1500 },
+  { kind: "overlap", ms: 100 },
+  { kind: "unanswered" },
+  { kind: "turn", ms: 2000 },
+  { kind: "overlap", ms: -50 },
+];
 
 const TICK = 16; // ms, one animation frame
 
@@ -99,6 +114,76 @@ test("a click shorter than the minimum speech does not start a turn", () => {
     [1000, SILENT, SPEECH],
   ]);
   assert.deepEqual(events, []);
+});
+
+test("summarise and formatSummary match the Python shared example", () => {
+  const s = summarise(SHARED_EVENTS);
+  assert.equal(s.answered.length, 2);
+  assert.equal(s.overlapped, 2);
+  assert.equal(s.unanswered, 1);
+  assert.ok(Math.abs(s.p50 - 1.75) < 1e-9);
+  assert.ok(Math.abs(s.p90 - 1.95) < 1e-9);
+  assert.equal(
+    formatSummary(s),
+    "heard: p50 1750 / p90 1950 ms (n = 2 answered, overlap 50%, 1 unanswered)",
+  );
+});
+
+test("pct uses the inclusive method like Python", () => {
+  const vals = [1.49, 1.5, 1.6, 2.0];
+  assert.ok(Math.abs(pct(vals, 50) - 1.55) < 1e-9);
+  assert.equal(pct([2.5], 50), 2.5);
+});
+
+test("unanswered fires once after 8 s without an agent answer", () => {
+  const meter = new TurnMeter({ unansweredMs: 8000 });
+  const segments = [
+    ...greeting,
+    [1500, SPEECH, SILENT],
+    [8100, SILENT, SILENT],
+  ];
+  const events = play(segments, meter);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, "unanswered");
+});
+
+test("unanswered does not fire before 8 s", () => {
+  const meter = new TurnMeter({ unansweredMs: 8000 });
+  const events = play(
+    [...greeting, [1500, SPEECH, SILENT], [7900, SILENT, SILENT]],
+    meter,
+  );
+  assert.equal(events.filter((e) => e.kind === "unanswered").length, 0);
+});
+
+test("an agent answer at 7.9 s prevents unanswered", () => {
+  const meter = new TurnMeter({ unansweredMs: 8000 });
+  const events = play(
+    [
+      ...greeting,
+      [1500, SPEECH, SILENT],
+      [6400, SILENT, SILENT],
+      [500, SILENT, SPEECH],
+    ],
+    meter,
+  );
+  assert.deepEqual(events.map((e) => e.kind), ["turn"]);
+});
+
+test("a new caller turn can arm again after unanswered", () => {
+  const meter = new TurnMeter({ unansweredMs: 8000 });
+  const events = play(
+    [
+      ...greeting,
+      [1500, SPEECH, SILENT],
+      [8100, SILENT, SILENT],
+      [1500, SPEECH, SILENT],
+      [1200, SILENT, SILENT],
+      [500, SILENT, SPEECH],
+    ],
+    meter,
+  );
+  assert.deepEqual(events.map((e) => e.kind), ["unanswered", "turn"]);
 });
 
 test("each answer is one turn, however many sentences it has", () => {
