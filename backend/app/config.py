@@ -33,5 +33,8 @@ GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Kore")
 # One JSONL file per call.
 CALLS_DIR = Path(os.getenv("CALLS_DIR", str(ROOT / "data" / "calls")))
 
+# The seeded clinic database, rebuilt by `make seed`.
+CLINIC_DB = Path(os.getenv("CLINIC_DB", str(ROOT / "data" / "clinic.db")))
+
 # Hard cap on a call's length, in seconds.
 MAX_CALL_SECS = int(os.getenv("MAX_CALL_SECS", "300"))
