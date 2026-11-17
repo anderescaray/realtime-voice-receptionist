@@ -30,6 +30,8 @@ export type VoiceCallHandle = {
   getRemoteStream: () => MediaStream | null;
 };
 
+const DISCONNECT_HANGUP_MS = 6000;
+
 function waitForIceComplete(pc: RTCPeerConnection, maxMs = 2000): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
   return new Promise((resolve) => {
@@ -94,8 +96,9 @@ export async function startVoiceCall(options: StartCallOptions): Promise<VoiceCa
 
   const failConnection = (): VoiceCallHandle => {
     if (closed) return publicHandle;
+    const shouldNotify = !closed;
     cleanup();
-    onPhase("error", "connection-failed");
+    if (shouldNotify) onPhase("error", "connection-failed");
     return publicHandle;
   };
 
@@ -110,18 +113,21 @@ export async function startVoiceCall(options: StartCallOptions): Promise<VoiceCa
   };
   onHandle?.(publicHandle);
 
-  onPhase("requesting-mic");
+  if (!closed) onPhase("requesting-mic");
   try {
     mic = await deps.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
   } catch (err) {
+    const shouldNotify = !closed;
     cleanup();
-    const name = err instanceof DOMException ? err.name : "";
-    if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-      onPhase("error", "mic-denied");
-    } else {
-      onPhase("error", "connection-failed");
+    if (shouldNotify) {
+      const name = err instanceof DOMException ? err.name : "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        onPhase("error", "mic-denied");
+      } else {
+        onPhase("error", "connection-failed");
+      }
     }
     publicHandle = {
       hangUp: () => cleanup(),
@@ -140,7 +146,7 @@ export async function startVoiceCall(options: StartCallOptions): Promise<VoiceCa
   }
 
   try {
-    onPhase("connecting");
+    if (!closed) onPhase("connecting");
     pc = new deps.RTCPeerConnection();
     publicHandle.hangUp = hangUp;
 
@@ -173,7 +179,7 @@ export async function startVoiceCall(options: StartCallOptions): Promise<VoiceCa
       }
       if (state === "disconnected") {
         clearDisconnectTimer();
-        disconnectTimer = setTimeout(() => hangUp(), 1200);
+        disconnectTimer = setTimeout(() => hangUp(), DISCONNECT_HANGUP_MS);
       }
     });
 
@@ -201,8 +207,9 @@ export async function startVoiceCall(options: StartCallOptions): Promise<VoiceCa
 
     if (!res.ok) {
       if (closed) return publicHandle;
+      const shouldNotify = !closed;
       cleanup();
-      onPhase("error", "server-error");
+      if (shouldNotify) onPhase("error", "server-error");
       return publicHandle;
     }
 

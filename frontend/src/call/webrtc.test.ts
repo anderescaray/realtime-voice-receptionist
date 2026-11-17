@@ -267,6 +267,39 @@ describe("startVoiceCall", () => {
     expect(pc.removeEventListener).toHaveBeenCalledWith("icegatheringstatechange", handler);
   });
 
+  it("waits 6s before hang-up on disconnected and cancels if connected returns", async () => {
+    vi.useFakeTimers();
+    const slowPc = new MockPeerConnection();
+    slowPc.connectionState = "connecting";
+  const connectionListeners: Array<(ev: Event) => void> = [];
+    slowPc.addEventListener = vi.fn((type?: string, listener?: EventListener) => {
+      if (type === "connectionstatechange" && listener) {
+        connectionListeners.push(listener as (ev: Event) => void);
+      }
+    });
+    const { deps, getLatestPc } = buildDeps({ pc: slowPc });
+    const phases: string[] = [];
+    const started = startVoiceCall({ language: "es", deps, onPhase: (p) => phases.push(p) });
+    await vi.waitFor(() => expect(getLatestPc().addTransceiver).toHaveBeenCalled());
+    await started;
+
+    slowPc.connectionState = "disconnected";
+    connectionListeners.forEach((fn) => fn(new Event("connectionstatechange")));
+    vi.advanceTimersByTime(5000);
+    expect(phases).not.toContain("ended");
+
+    slowPc.connectionState = "connected";
+    connectionListeners.forEach((fn) => fn(new Event("connectionstatechange")));
+    vi.advanceTimersByTime(6000);
+    expect(phases).not.toContain("ended");
+
+    slowPc.connectionState = "disconnected";
+    connectionListeners.forEach((fn) => fn(new Event("connectionstatechange")));
+    vi.advanceTimersByTime(6000);
+    expect(phases).toContain("ended");
+    vi.useRealTimers();
+  });
+
   it("reports connection-failed and cleans up when createOffer rejects", async () => {
     const trackStop = vi.fn();
     const stream = {

@@ -47,7 +47,7 @@ const CONTENT: Record<Lang, Record<StudioCardId, Omit<StudioCardView, "id">>> = 
     earliest_checkup: {
       title: "La cita más pronto",
       whoLabel: "Quién eres",
-      who: `Paciente conocida (${fullName(STUDIO_PATIENTS.p0097)}), nacido el ${formatDob(STUDIO_PATIENTS.p0097.dob, "es")}, referencia p0097.`,
+      who: `Paciente conocido (${fullName(STUDIO_PATIENTS.p0097)}), nacido el ${formatDob(STUDIO_PATIENTS.p0097.dob, "es")}.`,
       goalLabel: "Objetivo",
       goal: "La revisión más temprana que haya con cualquier dentista.",
       hintsLabel: "Puede salir",
@@ -59,7 +59,7 @@ const CONTENT: Record<Lang, Record<StudioCardId, Omit<StudioCardView, "id">>> = 
     move: {
       title: "Cambiar cita",
       whoLabel: "Quién eres",
-      who: `Paciente conocida (${fullName(STUDIO_PATIENTS.p0181)}), nacida el ${formatDob(STUDIO_PATIENTS.p0181.dob, "es")}, referencia p0181.`,
+      who: `Paciente conocida (${fullName(STUDIO_PATIENTS.p0181)}), nacida el ${formatDob(STUDIO_PATIENTS.p0181.dob, "es")}.`,
       goalLabel: "Objetivo",
       goal: "Mover tu próxima cita a una semana más tarde, por la tarde. No recuerdas la fecha: pide que te la digan.",
       hintsLabel: "Puede salir",
@@ -71,7 +71,7 @@ const CONTENT: Record<Lang, Record<StudioCardId, Omit<StudioCardView, "id">>> = 
     cancel: {
       title: "Anular cita",
       whoLabel: "Quién eres",
-      who: `Paciente conocida (${fullName(STUDIO_PATIENTS.p0042)}), nacida el ${formatDob(STUDIO_PATIENTS.p0042.dob, "es")}, referencia p0042.`,
+      who: `Paciente conocida (${fullName(STUDIO_PATIENTS.p0042)}), nacida el ${formatDob(STUDIO_PATIENTS.p0042.dob, "es")}.`,
       goalLabel: "Objetivo",
       goal: "Anular tu próxima cita. No recuerdas la fecha: pide que te la confirmen.",
       hintsLabel: "Puede salir",
@@ -83,7 +83,7 @@ const CONTENT: Record<Lang, Record<StudioCardId, Omit<StudioCardView, "id">>> = 
     toothache: {
       title: "Urgencia por dolor",
       whoLabel: "Quién eres",
-      who: `Paciente conocido (${fullName(STUDIO_PATIENTS.p0157)}), nacido el ${formatDob(STUDIO_PATIENTS.p0157.dob, "es")}, referencia p0157.`,
+      who: `Paciente conocido (${fullName(STUDIO_PATIENTS.p0157)}), nacido el ${formatDob(STUDIO_PATIENTS.p0157.dob, "es")}.`,
       goalLabel: "Objetivo",
       goal: "Dolor fuerte desde ayer; quieres que te vean lo antes posible. Sin fiebre, sin hinchazón, sin dificultad para respirar ni sangrado.",
       hintsLabel: "Puede salir",
@@ -124,7 +124,7 @@ const CONTENT: Record<Lang, Record<StudioCardId, Omit<StudioCardView, "id">>> = 
     earliest_checkup: {
       title: "Earliest check-up",
       whoLabel: "Who you are",
-      who: `Known patient (${fullName(STUDIO_PATIENTS.p0097)}), born ${formatDob(STUDIO_PATIENTS.p0097.dob, "en")}, id p0097.`,
+      who: `Known patient (${fullName(STUDIO_PATIENTS.p0097)}), born ${formatDob(STUDIO_PATIENTS.p0097.dob, "en")}.`,
       goalLabel: "Goal",
       goal: "The earliest check-up available with any dentist.",
       hintsLabel: "Things that may come up",
@@ -136,7 +136,7 @@ const CONTENT: Record<Lang, Record<StudioCardId, Omit<StudioCardView, "id">>> = 
     move: {
       title: "Move appointment",
       whoLabel: "Who you are",
-      who: `Known patient (${fullName(STUDIO_PATIENTS.p0181)}), born ${formatDob(STUDIO_PATIENTS.p0181.dob, "en")}, id p0181.`,
+      who: `Known patient (${fullName(STUDIO_PATIENTS.p0181)}), born ${formatDob(STUDIO_PATIENTS.p0181.dob, "en")}.`,
       goalLabel: "Goal",
       goal: "Move your next appointment to a later week, in the afternoon. You do not remember the date—ask the receptionist.",
       hintsLabel: "Things that may come up",
@@ -148,7 +148,7 @@ const CONTENT: Record<Lang, Record<StudioCardId, Omit<StudioCardView, "id">>> = 
     cancel: {
       title: "Cancel appointment",
       whoLabel: "Who you are",
-      who: `Known patient (${fullName(STUDIO_PATIENTS.p0042)}), born ${formatDob(STUDIO_PATIENTS.p0042.dob, "en")}, id p0042.`,
+      who: `Known patient (${fullName(STUDIO_PATIENTS.p0042)}), born ${formatDob(STUDIO_PATIENTS.p0042.dob, "en")}.`,
       goalLabel: "Goal",
       goal: "Cancel your next appointment. You do not remember the date—ask them to confirm it.",
       hintsLabel: "Things that may come up",
@@ -160,7 +160,7 @@ const CONTENT: Record<Lang, Record<StudioCardId, Omit<StudioCardView, "id">>> = 
     toothache: {
       title: "Toothache urgency",
       whoLabel: "Who you are",
-      who: `Known patient (${fullName(STUDIO_PATIENTS.p0157)}), born ${formatDob(STUDIO_PATIENTS.p0157.dob, "en")}, id p0157.`,
+      who: `Known patient (${fullName(STUDIO_PATIENTS.p0157)}), born ${formatDob(STUDIO_PATIENTS.p0157.dob, "en")}.`,
       goalLabel: "Goal",
       goal: "Strong pain since yesterday; you want to be seen as soon as possible. No fever, swelling, breathing trouble, or bleeding.",
       hintsLabel: "Things that may come up",

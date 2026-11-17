@@ -46,6 +46,23 @@ describe("Studio", () => {
     }
   });
 
+  it.each(["es", "en"] as const)("role card buttons expose aria-pressed (%s)", (lang) => {
+    render(<Studio lang={lang} />);
+    const buttons = screen.getAllByRole("button", { pressed: false });
+    const roleButtons = buttons.filter((b) => b.getAttribute("data-testid")?.startsWith("studio-card-"));
+    expect(roleButtons).toHaveLength(6);
+    for (const button of roleButtons) {
+      expect(button).toHaveAttribute("aria-pressed", "false");
+    }
+  });
+
+  it("shows no internal patient ids in visible copy", () => {
+    const { container } = render(<Studio lang="es" />);
+    expect(container.textContent ?? "").not.toMatch(/p\d{4}/);
+    const { container: enRoot } = render(<Studio lang="en" />);
+    expect(enRoot.textContent ?? "").not.toMatch(/p\d{4}/);
+  });
+
   it("does not call getUserMedia when selecting a card", async () => {
     const getUserMedia = vi.fn();
     Object.defineProperty(globalThis.navigator, "mediaDevices", {

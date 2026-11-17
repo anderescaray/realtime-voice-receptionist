@@ -36,6 +36,11 @@ function statusKey(phase: CallPhase, detail?: string): MessageKey {
   }
 }
 
+function retentionLine(lang: Lang, reviewDays: number): string {
+  if (reviewDays === 1) return t(lang, "callNoticeRetentionOne");
+  return t(lang, "callNoticeRetention").replace("{days}", String(reviewDays));
+}
+
 export function CallPanel({
   lang,
   reviewDays = reviewDaysFromEnv(),
@@ -48,9 +53,12 @@ export function CallPanel({
   const [callerLevel, setCallerLevel] = useState(0);
   const [agentLevel, setAgentLevel] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [needsAudioTap, setNeedsAudioTap] = useState(false);
 
   const callRef = useRef<VoiceCallHandle | null>(null);
+  const attemptRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const liveSinceRef = useRef<number | null>(null);
@@ -73,26 +81,41 @@ export function CallPanel({
   const startMeters = useCallback(
     (local: MediaStream, remote: MediaStream) => {
       stopMeters();
-      const ctx = new AudioContext();
-      audioCtxRef.current = ctx;
-      const you = levelsFromStream(ctx, local);
-      const agent = levelsFromStream(ctx, remote);
-      const tick = () => {
-        setCallerLevel(you());
-        setAgentLevel(agent());
-        rafRef.current = requestAnimationFrame(tick);
-      };
-      tick();
+      try {
+        let ctx = audioCtxRef.current;
+        if (!ctx) {
+          ctx = new AudioContext();
+          audioCtxRef.current = ctx;
+        }
+        void ctx.resume();
+        const you = levelsFromStream(ctx, local);
+        const agent = levelsFromStream(ctx, remote);
+        const tick = () => {
+          setCallerLevel(you());
+          setAgentLevel(agent());
+          rafRef.current = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch {
+        /* meters are optional */
+      }
     },
     [stopMeters],
   );
 
+  const bumpAttempt = useCallback(() => {
+    attemptRef.current += 1;
+    return attemptRef.current;
+  }, []);
+
   const hangUp = useCallback(() => {
+    bumpAttempt();
     callRef.current?.hangUp();
     callRef.current = null;
     stopMeters();
     liveSinceRef.current = null;
-  }, [stopMeters]);
+    setNeedsAudioTap(false);
+  }, [bumpAttempt, stopMeters]);
 
   useEffect(() => () => hangUp(), [hangUp]);
 
@@ -104,6 +127,16 @@ export function CallPanel({
   }, [activeCard?.id, hangUp]);
 
   useEffect(() => {
+    if (!activeCard) return;
+    const el = headingRef.current;
+    if (!el) return;
+    el.focus();
+    if (typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [activeCard?.id]);
+
+  useEffect(() => {
     if (phase !== "live") return;
     const id = window.setInterval(() => {
       if (liveSinceRef.current) {
@@ -113,15 +146,26 @@ export function CallPanel({
     return () => clearInterval(id);
   }, [phase]);
 
-  const retention = t(lang, "callNoticeRetention").replace("{days}", String(reviewDays));
+  const retention = retentionLine(lang, reviewDays);
 
   const startCall = async () => {
     if (!understood || !hasMedia || phase === "live" || phase === "connecting" || phase === "requesting-mic") {
       return;
     }
     hangUp();
+    const token = bumpAttempt();
     setElapsedSec(0);
-    const handle = await startVoiceCall({
+    setNeedsAudioTap(false);
+
+    try {
+      const ctx = new AudioContext();
+      audioCtxRef.current = ctx;
+      void ctx.resume();
+    } catch {
+      audioCtxRef.current = null;
+    }
+
+    await startVoiceCall({
       language: lang,
       deps: {
         getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
@@ -129,14 +173,21 @@ export function CallPanel({
         fetch: window.fetch.bind(window),
       },
       onHandle: (session) => {
+        if (token !== attemptRef.current) return;
         callRef.current = session;
       },
       onRemoteStream: (stream) => {
-        if (audioRef.current) audioRef.current.srcObject = stream;
+        if (token !== attemptRef.current) return;
+        const audio = audioRef.current;
+        if (audio) {
+          audio.srcObject = stream;
+          void audio.play().catch(() => setNeedsAudioTap(true));
+        }
         const local = callRef.current?.getLocalStream();
         if (local) startMeters(local, stream);
       },
       onPhase: (next, detail) => {
+        if (token !== attemptRef.current) return;
         setPhase(next);
         setStatusDetail(detail);
         if (next === "live") {
@@ -148,7 +199,6 @@ export function CallPanel({
         }
       },
     });
-    callRef.current = handle;
   };
 
   const onMainButton = () => {
@@ -160,6 +210,12 @@ export function CallPanel({
     void startCall();
   };
 
+  const onTapToHear = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    void audio.play().then(() => setNeedsAudioTap(false));
+  };
+
   const inCall = phase === "live" || phase === "connecting" || phase === "requesting-mic";
   const talkEnabled = understood && hasMedia && !inCall;
   const showHangUp = inCall;
@@ -168,7 +224,12 @@ export function CallPanel({
 
   return (
     <section className="call-panel" aria-labelledby="call-panel-heading">
-      <h2 id="call-panel-heading" className="visually-hidden">
+      <h2
+        id="call-panel-heading"
+        className="visually-hidden"
+        tabIndex={-1}
+        ref={headingRef}
+      >
         {t(lang, "callTalk")}
       </h2>
 
@@ -180,6 +241,9 @@ export function CallPanel({
           </p>
           <p>
             <strong>{activeCard.goalLabel}:</strong> {activeCard.goal}
+          </p>
+          <p>
+            <strong>{activeCard.hintsLabel}:</strong>
           </p>
           <ul>
             {activeCard.hints.map((hint) => (
@@ -218,6 +282,17 @@ export function CallPanel({
           {showHangUp ? t(lang, "callHangUp") : t(lang, "callTalk")}
         </button>
       </div>
+
+      {needsAudioTap ? (
+        <button
+          type="button"
+          className="btn btn--secondary call-panel__tap-audio"
+          onClick={onTapToHear}
+          data-testid="call-tap-to-hear"
+        >
+          {t(lang, "callTapToHear")}
+        </button>
+      ) : null}
 
       <p className="call-panel__status" aria-live="polite" data-testid="call-status">
         {statusText}

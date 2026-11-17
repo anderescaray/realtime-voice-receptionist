@@ -24,6 +24,8 @@ const es = {
   callNoticeAi: "Hablarás con un asistente de inteligencia artificial, no con una persona.",
   callNoticeRetention:
     "La grabación y la transcripción se conservan {days} días y después se eliminan.",
+  callNoticeRetentionOne:
+    "La grabación y la transcripción se conservan 1 día y después se eliminan.",
   callNoticePrivacy:
     "No des tu nombre real, datos de salud ni teléfono. Usa los datos inventados de una tarjeta del Estudio.",
   callNoticePrivacyLanding:
@@ -45,6 +47,7 @@ const es = {
   callSpeakingYou: "Tú",
   callSpeakingAgent: "Recepcionista",
   callElapsed: "Tiempo",
+  callTapToHear: "Pulsa para oír al recepcionista",
   clinicName: "Clínica Dental Los Tilos · Madrid",
 } as const;
 
@@ -71,6 +74,8 @@ const en: { [K in keyof typeof es]: string } = {
   callNoticeAi: "You will talk to an AI assistant, not a human.",
   callNoticeRetention:
     "The recording and transcript are kept for {days} days, then deleted.",
+  callNoticeRetentionOne: "The recording and transcript are kept for 1 day, then deleted.",
+  callTapToHear: "Tap to hear the receptionist",
   callNoticePrivacy:
     "Do not give your real name, health details or phone number. Use the made-up details from a Studio card.",
   callNoticePrivacyLanding:
@@ -152,6 +157,7 @@ export function parseReviewDays(raw: string | undefined, fallback = 7): number {
   return fallback;
 }
 
+/** VITE_REVIEW_LINK_DAYS must be set at build time to match the server's REVIEW_LINK_DAYS (default 7 on both). */
 export function reviewDaysFromEnv(): number {
   return parseReviewDays(import.meta.env.VITE_REVIEW_LINK_DAYS as string | undefined);
 }

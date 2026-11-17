@@ -4,12 +4,12 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { CallPanel } from "./CallPanel";
 
 const trackStop = vi.fn();
-const getUserMedia = vi.fn(async () => {
+const getUserMedia = vi.fn<() => Promise<MediaStream>>(async () => {
   const track = { kind: "audio", stop: trackStop };
   return {
     getAudioTracks: () => [track],
     getTracks: () => [track],
-  };
+  } as unknown as MediaStream;
 });
 
 beforeEach(() => {
@@ -83,6 +83,16 @@ describe("CallPanel", () => {
     rerender(<CallPanel lang="en" reviewDays={14} studioLink />);
     expect(screen.getByTestId("call-retention")).toHaveTextContent("14");
     expect(screen.getByText(/AI assistant/i)).toBeInTheDocument();
+  });
+
+  it("uses singular retention copy when reviewDays is 1", () => {
+    const { rerender } = render(<CallPanel lang="es" reviewDays={1} />);
+    expect(screen.getByTestId("call-retention")).toHaveTextContent(/1 día/);
+    expect(screen.getByTestId("call-retention")).not.toHaveTextContent(/1 días/);
+
+    rerender(<CallPanel lang="en" reviewDays={1} />);
+    expect(screen.getByTestId("call-retention")).toHaveTextContent(/1 day/);
+    expect(screen.getByTestId("call-retention")).not.toHaveTextContent(/1 days/);
   });
 
   it("shows message when mediaDevices is missing", () => {
@@ -175,10 +185,111 @@ describe("CallPanel", () => {
     expect(screen.getByTestId("call-main-button")).toBeEnabled();
   });
 
-  it("keeps a live call when only the page language changes", async () => {
+  it("ignores a stale getUserMedia completion after hang-up and a new start", async () => {
     const user = userEvent.setup();
-    const close = vi.fn();
-    const listeners = new Map<string, EventListener>();
+    const trackStopFirst = vi.fn();
+    const trackStopSecond = vi.fn();
+    let resolveFirst: (s: MediaStream) => void = () => {};
+    const firstPromise = new Promise<MediaStream>((resolve) => {
+      resolveFirst = resolve;
+    });
+    let callIndex = 0;
+    getUserMedia.mockImplementation(async () => {
+      callIndex += 1;
+      if (callIndex === 1) return firstPromise;
+      const track = { kind: "audio", stop: trackStopSecond };
+      return {
+        getAudioTracks: () => [track],
+        getTracks: () => [track],
+      } as unknown as MediaStream;
+    });
+
+    const pcInstances: Array<{
+      close: ReturnType<typeof vi.fn>;
+      listeners: Map<string, EventListener>;
+    }> = [];
+    vi.stubGlobal(
+      "RTCPeerConnection",
+      class {
+        iceGatheringState = "complete";
+        connectionState = "connected";
+        localDescription = { sdp: "x", type: "offer" };
+        close = vi.fn();
+        listeners = new Map<string, EventListener>();
+        addTransceiver = vi.fn();
+        createDataChannel = vi.fn(() => ({ addEventListener: vi.fn(), readyState: "open" }));
+        setLocalDescription = vi.fn();
+        createOffer = vi.fn(async () => ({}));
+        setRemoteDescription = vi.fn();
+        removeEventListener = vi.fn();
+        addEventListener = vi.fn((type: string, fn: EventListener) => {
+          this.listeners.set(type, fn);
+        });
+        constructor() {
+          pcInstances.push({ close: this.close, listeners: this.listeners });
+        }
+      },
+    );
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ sdp: "a", type: "answer" })));
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        resume = vi.fn(async () => {});
+        close = vi.fn();
+        createAnalyser = () => ({ fftSize: 1024, getFloatTimeDomainData: vi.fn() });
+        createMediaStreamSource = () => ({ connect: vi.fn() });
+      },
+    );
+
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+
+    render(<CallPanel lang="es" reviewDays={7} />);
+    await user.click(screen.getByTestId("call-understand"));
+    await user.click(screen.getByTestId("call-main-button"));
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByTestId("call-main-button"));
+    await waitFor(() =>
+      expect(screen.getByTestId("call-status")).toHaveTextContent(/finalizada|ended/i),
+    );
+    await user.click(screen.getByTestId("call-main-button"));
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(pcInstances.length).toBe(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("call-status")).toHaveTextContent(/Conectando|Connecting/),
+    );
+
+    const livePc = pcInstances[0]!;
+    livePc.listeners.get("connectionstatechange")?.(new Event("connectionstatechange"));
+    await waitFor(() =>
+      expect(screen.getByTestId("call-status")).toHaveTextContent(/Llamada en curso|Call live/),
+    );
+
+    const firstTrack = { kind: "audio", stop: trackStopFirst };
+    resolveFirst({
+      getAudioTracks: () => [firstTrack],
+      getTracks: () => [firstTrack],
+    } as unknown as MediaStream);
+    await waitFor(() => expect(trackStopFirst).toHaveBeenCalled());
+
+    await user.click(screen.getByTestId("call-main-button"));
+    expect(livePc.close).toHaveBeenCalled();
+    expect(trackStopSecond).toHaveBeenCalled();
+    expect(trackStopFirst).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByTestId("call-status")).toHaveTextContent(/finalizada|ended/i),
+    );
+  });
+
+  it("shows tap-to-hear when remote audio play() rejects", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "MediaStream",
+      class {
+        constructor(_tracks: unknown[]) {}
+      },
+    );
+    let onTrack: ((ev: RTCTrackEvent) => void) | undefined;
     vi.stubGlobal(
       "RTCPeerConnection",
       class {
@@ -191,37 +302,32 @@ describe("CallPanel", () => {
         createOffer = vi.fn(async () => ({}));
         setRemoteDescription = vi.fn();
         addEventListener = vi.fn((type: string, fn: EventListener) => {
-          listeners.set(type, fn);
+          if (type === "track") onTrack = fn as (ev: RTCTrackEvent) => void;
         });
         removeEventListener = vi.fn();
-        close = close;
+        close = vi.fn();
       },
     );
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ sdp: "a", type: "answer" })));
     vi.stubGlobal(
       "AudioContext",
       class {
+        resume = vi.fn(async () => {});
         close = vi.fn();
         createAnalyser = () => ({ fftSize: 1024, getFloatTimeDomainData: vi.fn() });
         createMediaStreamSource = () => ({ connect: vi.fn() });
       },
     );
 
-    const { rerender } = render(<CallPanel lang="es" reviewDays={7} />);
-    await user.click(screen.getByTestId("call-understand"));
-    await user.click(screen.getByTestId("call-main-button"));
-    await waitFor(() =>
-      expect(screen.getByTestId("call-status")).toHaveTextContent(/Conectando|Connecting/),
-    );
-    listeners.get("connectionstatechange")?.(new Event("connectionstatechange"));
-    await waitFor(() =>
-      expect(screen.getByTestId("call-status")).toHaveTextContent(/Llamada en curso|Call live/),
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockRejectedValue(
+      new Error("gesture required"),
     );
 
-    close.mockClear();
-    rerender(<CallPanel lang="en" reviewDays={7} />);
-    expect(screen.getByTestId("call-status")).toHaveTextContent(/Call live/);
-    expect(close).not.toHaveBeenCalled();
-    expect(screen.getByTestId("call-main-button")).toHaveTextContent(/Hang up/);
+    render(<CallPanel lang="en" reviewDays={7} />);
+    await user.click(screen.getByTestId("call-understand"));
+    await user.click(screen.getByTestId("call-main-button"));
+    await waitFor(() => expect(onTrack).toBeDefined());
+    onTrack!({ track: { kind: "audio" } } as RTCTrackEvent);
+    expect(await screen.findByTestId("call-tap-to-hear")).toHaveTextContent(/Tap to hear/i);
   });
 });

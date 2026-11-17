@@ -51,7 +51,7 @@ export function App() {
         <LangSwitch lang={lang} onChange={setLang} />
       </header>
 
-      {route === "studio" ? <Studio lang={lang} key={lang} /> : <Landing lang={lang} key={lang} />}
+      {route === "studio" ? <Studio lang={lang} /> : <Landing lang={lang} />}
     </div>
   );
 }

@@ -18,27 +18,27 @@ export function Studio({ lang }: StudioProps) {
       <p className="lead">{t(lang, "studioLead")}</p>
       <p>{t(lang, "studioPickRole")}</p>
 
-      <div className="card-grid" role="list">
+      <ul className="card-grid">
         {cards.map((card) => (
-          <button
-            key={card.id}
-            type="button"
-            role="listitem"
-            className={`role-card${selectedId === card.id ? " role-card--active" : ""}`}
-            onClick={() => setSelectedId(card.id)}
-            data-testid={`studio-card-${card.id}`}
-            aria-pressed={selectedId === card.id}
-          >
-            <h2>{card.title}</h2>
-            <p>
-              <strong>{card.whoLabel}:</strong> {card.who}
-            </p>
-            <p>
-              <strong>{card.goalLabel}:</strong> {card.goal}
-            </p>
-          </button>
+          <li key={card.id}>
+            <button
+              type="button"
+              className={`role-card${selectedId === card.id ? " role-card--active" : ""}`}
+              onClick={() => setSelectedId(card.id)}
+              data-testid={`studio-card-${card.id}`}
+              aria-pressed={selectedId === card.id}
+            >
+              <span className="role-card__title">{card.title}</span>
+              <span className="role-card__who">
+                <strong>{card.whoLabel}:</strong> {card.who}
+              </span>
+              <span className="role-card__goal">
+                <strong>{card.goalLabel}:</strong> {card.goal}
+              </span>
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
 
       {activeCard ? <CallPanel lang={lang} activeCard={activeCard} /> : null}
     </main>
