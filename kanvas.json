@@ -185,7 +185,7 @@
     {
       "id": "EN-02",
       "title": "Slot engine with reasons",
-      "state": "todo",
+      "state": "done",
       "group": "EN",
       "deps": ["EN-01"],
       "at": "2026-11-03T20:43:34Z",
@@ -196,13 +196,48 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D1): urgency searches include today's slots ≥ URGENCY_MIN_LEAD_MINUTES (default 120) after the call clock's now; new blocking reason within_lead_time (§5.6)."
+        },
+        {
+          "at": "2026-11-17T18:19:26Z",
+          "by": "engine",
+          "text": "Plan: engine/slots.py with search_slots(conn, now=..., ...) -> slots + blocked reasons (§5.6) and check_slot() re-check for booking; 15-min grid per working interval minus closures, whole/part-day absences, bookings, urgency lead time, part of day and patient diary; window tomorrow..+28 (today for urgency); DST-safe zoneinfo per date. Additive schema change: absences.start_local/end_local (nullable) for part-day absences. Tests on fixed clock, hand-made DBs and seeded DBs (anchor 2026-11-16 and 2027-03-22 across DST). Worker: cursor claude-opus-5-thinking-high; then independent review."
+        },
+        {
+          "at": "2026-11-17T18:34:35Z",
+          "by": "engine",
+          "text": "Contract notes (additive, EN-02): §10 absences gains nullable start_local/end_local ('HH:MM', both or neither; NULL = whole days) for part-day absences; schema.sql updated, seed unchanged. §5.3 search_availability: after/before inclusive, after clipped to window start, an after past the horizon gives beyond_horizon (not bad_range), new refusal treatment_mismatch when practitioner_id does not do the treatment, bad_range defined. §5.6: reason shape {reason, dates?, until?}, grouping/order and per-day precedence; morning = start before 14:00. Affects: Engine (EN-04 tools map SlotSearchError codes and format reasons), Evals (scenario expectations on reasons), Ops/seed (none needed)."
+        },
+        {
+          "at": "2026-11-17T19:05:36Z",
+          "by": "cursor-reviewer",
+          "text": "Independent review R1 (gpt-5.6-sol-high via cursor-agent, ask mode, clean git-archive copy): 6 blocking. Accepted and fixed: lead time across DST computed in wall time; nonexistent/repeated local starts on clock-change days; check_slot compared minute-of-day not the instant; duplicate slots from overlapping working-hours rows; missing same-day precedence tests; missing board note for the contract changes (added). R2 could not run on Cursor (usage limit); moved to Gemini per the new review rule."
+        },
+        {
+          "at": "2026-11-17T19:05:36Z",
+          "by": "gemini-reviewer",
+          "text": "Model used: gemini-4-argon-high (agy CLI, plan mode + sandbox, read-only, clean copy). Round 2 (fixes only, code by Claude): all 5 code fixes verified correct and complete; regression check on ordering, overlap checks, check_slot/search agreement, diary bounds, midnight-ending slots, performance: no findings. VERDICT: APPROVE."
+        },
+        {
+          "at": "2026-11-17T19:05:36Z",
+          "by": "engine",
+          "text": "Done on branch feat/en-02-slot-engine (2 commits, not pushed). engine/slots.py: search_slots(conn, now=..., treatment, practitioner_id?, after?, before?, part_of_day?, patient_id?, exclude_appointment_id?, limit=5, horizon_days=28, urgency_lead_minutes=120) -> SlotSearch(slots, blocked, window) with as_dict(); check_slot(...) -> None or same_day/too_soon/slot_taken/patient_overlap/treatment_mismatch for re-checks at booking. 15-min grid per merged working interval, never across a break; closures, whole/part-day absences, bookings, urgency lead time (UTC elapsed), part of day, patient diary; reasons grouped per §5.6 with fixed per-day precedence; clock-change hours never offered; diary read in 5 queries (~15 ms for 28 days). Additive schema/contract: absences.start_local/end_local; after/before inclusive; treatment_mismatch on search. 134 tests in test_slots.py incl. seeded DBs (2026-11-16, 2027-03-22 across DST). To check: EN-04 maps SlotSearchError codes and passes settings from env."
+        },
+        {
+          "at": "2026-11-17T19:05:45Z",
+          "by": "engine",
+          "text": "Correction to the finish note: test_slots.py has 86 tests (133 in the whole backend suite, plus 9 node tests)."
+        },
+        {
+          "at": "2026-11-17T19:33:01Z",
+          "by": "engine",
+          "text": "Known edge, accepted by the human (2026-11-17): a practitioner who works that weekday but has no shift long enough for the treatment is reported as not_working_that_day (no candidate slot exists for a later rule to claim). The current catalogue never produces this case."
         }
       ]
     },
     {
       "id": "EN-03",
       "title": "Store: staging, operation keys, no overlaps",
-      "state": "todo",
+      "state": "done",
       "group": "EN",
       "deps": ["EN-01"],
       "at": "2026-11-03T20:43:34Z",
@@ -213,6 +248,31 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D1/D10): appointments.same_day_urgent and messages.urgent columns (§10); purge of an expired public call deletes its rows (§11)."
+        },
+        {
+          "at": "2026-11-17T19:06:37Z",
+          "by": "engine",
+          "text": "Plan: engine/store.py in 4 small worker jobs (composer-2.5): (1) open_db (WAL, FK, busy_timeout, explicit BEGIN IMMEDIATE), staged-change dataclasses and a per-call Staging with operation keys <call_id>:<n>, one pending change, register->register_book extension; (2) save() for register/book/register_book: idempotent on operation_key (returns the first result, already_saved), overlap trigger -> slot_taken/patient_overlap, same_day_urgent set by the store, store_unavailable on lock/IO; (3) move/cancel with a stale-view check (appointment_not_seen), messages, review-link rows and the DB part of the §11 purge; (4) concurrency tests on a temp DB file with real connections. Reuses the EN-01 overlap triggers. Review: me line by line, then a fresh Claude (opus) subagent, then Gemini read-only second opinion."
+        },
+        {
+          "at": "2026-11-17T19:17:58Z",
+          "by": "engine",
+          "text": "Contract note (additive, EN-03): §5.3 confirm_pending may also refuse appointment_not_seen (a move/cancel whose appointment was changed or cancelled by someone else after the call looked it up; store re-checks inside the write transaction), patient_overlap (lost a race on the patient's own diary) and store_unavailable (already in §5.4); the change is discarded on the first two. Store-internal code bad_change (malformed change, unknown FK, purge of a call without a link) never reaches the model: EN-04 maps it. Affects: Engine (EN-04 confirm_pending), Console (CO-05 purge uses purge_call), Ops (OP-02 purge script uses expired_calls/purge_call)."
+        },
+        {
+          "at": "2026-11-17T19:30:32Z",
+          "by": "claude-reviewer",
+          "text": "Model used: claude opus (fresh general-purpose subagent, clean copy only). Code by composer-2.5 (+ orchestrator edits). VERDICT: APPROVE, 0 blocking, 9 minor. Fixed: patient numbers reusable after purge (forward-only meta counter); purge_call now checks expiry; already_registered added to confirm_pending in contracts; cancel never returns same_day_urgent; race tests assert loser codes; exact purge counts; register_book same-key race test. Already done: board note. Deferred to human: seed ids differ from §5.1."
+        },
+        {
+          "at": "2026-11-17T19:30:32Z",
+          "by": "gemini-reviewer",
+          "text": "Model used: gemini-4-argon-high (agy CLI, plan mode + sandbox, read-only, clean copy). Second opinion R1: 1 blocking (a retried cancel replayed same_day_urgent=True, unlike the first result; quoted §5.3/§10 retry rule) + 1 minor (stored key replayed for another kind; dead variable). Both fixed with tests. R2 (fixes only): VERDICT: APPROVE."
+        },
+        {
+          "at": "2026-11-17T19:30:32Z",
+          "by": "engine",
+          "text": "Done on branch feat/en-03-store (6 commits, not pushed). engine/store.py: open_db (WAL, FK, busy_timeout 5000, explicit BEGIN IMMEDIATE); staged-change dataclasses + per-call Staging (keys <call_id>:<n>, never reused; one pending change; register+book -> register_book same key); save(conn, change, now=, saved_utc=) -> SaveResult for register/book/register_book/move/cancel: idempotent on operation_key (retry returns first result, already_saved), EN-01 overlap triggers mapped to slot_taken/patient_overlap, same_day_urgent set by the store, stale view -> appointment_not_seen, lock/IO -> store_unavailable, always rolls back; add_message, add_review_link, expired_calls, purge_call(now=) (DB part of §11, refuses calls without an expired link). New ids p_NNNN (forward-only counter), a_/m_ + 8 hex. 53 store tests incl. 11 thread races on a temp DB file (~2.5 s). Contract notes: confirm_pending may refuse appointment_not_seen, patient_overlap, already_registered. To check: seed ids (p0001, dent_1, a00001) differ from §5.1; EN-04 maps bad_change and passes saved_utc."
         }
       ]
     },
@@ -241,7 +301,7 @@
     {
       "id": "VO-01",
       "title": "Per-call prompt",
-      "state": "todo",
+      "state": "review",
       "group": "VO",
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
@@ -257,6 +317,41 @@
           "at": "2026-11-08T15:45:24Z",
           "by": "foundation",
           "text": "Contract requirements (FD-02): D13 and D20 (§6.2): red-flag lists in app/redflags.py, tuned on tests/redflags/tuning.yaml and measured on a holdout set never used for tuning; report recall and false-alarm rate; a licensed dentist must validate the list before real use. D14 (§7.7): the matcher also reads transcripts marked as echo."
+        },
+        {
+          "at": "2026-11-17T18:17:45Z",
+          "by": "voice",
+          "text": "Plan: (1) holdout first: a gpt-5.6-sol-high worker writes the red-flag holdout from the contract's four categories only, kept outside the worktree; (2) a claude-opus-5-thinking-high worker builds app/clinic.py (catalogue from the seeded DB, cache keyed on DB file, dated 14-day calendar from the call clock, spoken_phone, static topic texts), app/prompt.py (brain prompt; voice prompt for speech-to-speech; cascade = brain prompt + spoken-reply block, never forked), app/redflags.py tuned on tests/redflags/tuning.yaml, with tests; (3) lists frozen, then holdout copied to tests/redflags/holdout.yaml and recall/false-alarm measured; (4) my review, independent cursor review, Gemini second opinion. Wiring into session/layers stays with VO-02 (needs the tools)."
+        },
+        {
+          "at": "2026-11-17T18:47:18Z",
+          "by": "voice",
+          "text": "Lists frozen at e5188e2 (sha256 in lane folder). Holdout round 1 (140 items, written first by gpt-5.6-sol-high, unseen by the tuner): recall 51/64 (79.7%), false alarms 3/76 (3.9%); bleeding weakest (11/18). Per §6.2, 16 gap phrases (13 misses, 3 false alarms) set aside to move to tuning with fresh replacements. Round 2 blocked: Cursor usage limit on opus and gpt until 2026-11-18."
+        },
+        {
+          "at": "2026-11-17T19:36:10Z",
+          "by": "voice",
+          "text": "End of session 2026-11-17. Branch feat/vo-01-per-call-prompt, last commit e5188e2 (not pushed). State: prompt (backend/app/prompt.py), catalogue/calendar (backend/app/clinic.py), matcher (backend/app/redflags.py) + tuning.yaml (180 items) + tests built by claude-opus-5-thinking-high; my review done (one wording fix); make verify green. Lists frozen at e5188e2 (sha256 in ~/lanes/voice/holdout-VO-01.frozen.sha256). Holdout round 1: recall 51/64 (79.7%), false alarms 3/76 (3.9%). Round 2 prepared: 16 gap phrases (13 misses + 3 false alarms) to move into tuning are in ~/lanes/voice/holdout-VO-01-r2/moved.yaml and in ~/lanes/voice/worker-VO-01-2.prompt.md; the 16 replacement holdout phrases ARE ALREADY WRITTEN by a fresh Claude subagent (opus, saw no lists) and assembled into ~/lanes/voice/holdout-VO-01/holdout-round2.yaml (140 items, 64 red; read-only; not read by the orchestrator). No holdout file in the worktree. Left: (1) re-tune with agy via ~/lanes/voice/run-agy.sh (read its header first; model gemini-4-argon-high; reuse worker-VO-01-2.prompt.md, show the human runner + command before the first run); (2) freeze, copy holdout-round2.yaml to tests/redflags/holdout.yaml, measure, report both rounds (recall weighs more than false alarms, D2); (3) reviews: Argon reviews the code (read-only, in ~/lanes/voice/review-VO-01/), a fresh Claude subagent (opus) reviews the tuned lists; (4) commit holdout + figures, finish. Note for finish summary: a licensed dentist must validate the list. Next run: agy re-tune."
+        },
+        {
+          "at": "2026-11-18T20:18:42Z",
+          "by": "voice",
+          "text": "Round 2 done, NOT finished: stays in Doing (3 review rounds used, both reviewers still request changes). Branch feat/vo-01-per-call-prompt, last commit a89069e (not pushed). Holdout file: holdout-round2.yaml chosen by structure only (= kept 124 + the 16 fresh subagent items in holdout-r2.yaml, ids es-071..075/en-071..081; no moved item inside). Re-tune by gemini-4-argon-high (agy could not run shell; I fixed 5 long lines + 1 miss). Holdout: round 1 recall 51/64 (79.7%), FA 3/76 (3.9%); round 2 frozen (sha in ~/lanes/voice/holdout-VO-01-r2.frozen.sha256) recall 64/64 (100%), FA 0/76 (0%); after review fixes 64/64, FA 2/76 (2.6%); 124/140 items shared with round 1. Leak check: agy conversation store shows no access outside the worktree. Reviews (Argon code, fresh Claude opus lists): r1 and r2 blockers fixed (span-local cancels, clause-scoped past, negation guard, word boundaries, tracker memory, duration signal, clinic/prompt minors); r3 CHANGES REQUESTED, incl. 2 regressions of my r2 fixes (tracker re-fires after a combined flag; 'constant pain, no bleeding' fires) plus recall gaps. Open list: ~/lanes/voice/VO-01-open-findings-r3.md. make verify green (406). Left: human decision on a 4th review round, then fix the open items, re-measure figures only, update README table, finish. A licensed dentist must validate the list before real use (D13)."
+        },
+        {
+          "at": "2026-11-18T20:32:25Z",
+          "by": "voice",
+          "text": "Review round 4 (scoped by human) done; still in Doing. Last commit 05016fe on feat/vo-01-per-call-prompt (not pushed). Fixed with tests: both round-2 regressions (tracker re-firing after a fired flag; 'constant pain, no bleeding'), and the recall gaps (wouldn't/didn't stop, Spanish imperfect, durations hours/days/minutes, 'parque de niños', cancels/past across punctuation, past covers only what follows it). Argon (code) round 4: APPROVE (2 minors applied). Claude (lists) round 4: CHANGES REQUESTED, 2 BLOCKING (bleeding restore after an earlier denial; 'no se me paró el sangrado' forms) + 4 minors: all applied with tests in 05016fe but not re-reviewed (no 5th round authorised). Holdout measured once at the end: recall 64/64 (100%), FA 2/76 (2.6%); README table has a row 'Round 2, after review round 4' and the 16-fresh-items note, plus known limitations. make verify green (451). Left: a scoped re-check of those 2 fixes by a fresh Claude list reviewer, then finish. Open list: ~/lanes/voice/VO-01-open-findings-r4.md. A licensed dentist must validate the list before real use (D13)."
+        },
+        {
+          "at": "2026-11-18T20:32:25Z",
+          "by": "voice",
+          "text": "Follow-up (false alarms only, accepted under D2, not blockers): 'No, respiro bien.' fires breathing; age/distance read as temperature ('tengo 38', 'a 40'); 'una galleta'/'la leche' read as a blow; 'acabo de dar un paseo'; 'que pare de sangrar' without negation; baby tooth 'a punto de caerse'; remembered 'dolor constante' + later light gum bleeding; a remembered blow not cleared by a later general denial; 'hace (\\w+ ){0,3}' too broad. Known misses listed in backend/README.md."
+        },
+        {
+          "at": "2026-11-18T21:48:03Z",
+          "by": "voice",
+          "text": "VO-01 done on feat/vo-01-per-call-prompt, last commit 05016fe (not pushed, no PR). Per-call brain/cascade/voice prompts with a dated two-week calendar from session.now, catalogue text, and the red-flag matcher with RedFlagTracker (contracts §6.2).\n\nRed-flag holdout (contracts D20; tuning set 258 items at 100% recall / 0% false alarms):\n| Run | Recall | False alarms |\n| Round 1 | 51/64 (79.7%) | 3/76 (3.9%) |\n| Round 2, frozen | 64/64 (100%) | 0/76 (0%) |\n| Round 2, after review rounds 1-2 | 64/64 (100%) | 2/76 (2.6%) |\n| Round 2, after review round 4 | 64/64 (100%) | 2/76 (2.6%) |\nThe round-2 holdout reuses 124 phrases from round 1; only 16 are fresh, so treat the round-2 figures as optimistic.\n\nReviews: round 4 Argon (code) APPROVE; round 4 Claude (lists) found 2 BLOCKING items, fixed with tests in 05016fe; a scoped re-check by a fresh Claude reviewer APPROVE (both fixed, no regressions, make verify green, tuning 164/164 and 0/94).\n\nFollow-up (recall, minor, pre-existing): Spanish perfect/preterite 'no se le ha parado el sangrado', 'no se me detuvo el sangrado', 'no se me frenó la sangre' do not fire; the reviewer proposed adding (ha|habia|han|habian) plus parado/cortado/detuvo/detenido/frenó/frenado/cesó/cesado to the heavy pattern (checked: tuning stays 100%/0%). False-alarm-only follow-ups are in the earlier note.\n\nDentist validation (D13): the red-flag phrase lists and triage wording must be validated by a licensed dentist before any use with real patients."
         }
       ]
     },
@@ -279,6 +374,11 @@
           "at": "2026-11-08T15:45:24Z",
           "by": "foundation",
           "text": "Contract requirements (FD-02): D14 (§7.7, §8): echo check in app/voice/echo.py, logged as echo: true, with the unit tests listed in §7.7. D15 (§5.11): log transcript_missing, and measure when caller transcripts arrive relative to each ask_clinic call on every speech-to-speech layer. D18 (§6.1, §8): log the active voice_set in voice_config. D22 (§3.4): play() barge-in rules."
+        },
+        {
+          "at": "2026-11-17T18:38:23Z",
+          "by": "console",
+          "text": "Contract change (CO-03, approved by the human, additive): contracts.md §3.3 now says the browser page sends its language in the /api/offer body as request_data: {\"language\": \"es\"|\"en\"} (inside request_data because SmallWebRTCRequest.from_dict refuses unknown top-level keys). The call server should read it at call start and pass it to CallSession.start as the starting language; missing or unknown -> es. Today server.py ignores it. Branch feat/co-03-studio-landing."
         }
       ]
     },
@@ -312,12 +412,19 @@
       "deps": ["VO-02"],
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
-      "desc": "Stereo WAV (caller left, agent right) and a timing file per call; a JSONL log with transcript, tool inputs and results, staged and saved actions, and the outcome or the reason nothing was done. After the call, compute greeting time, response latency, dead air, interruptions and yield time."
+      "desc": "Stereo WAV (caller left, agent right) and a timing file per call; a JSONL log with transcript, tool inputs and results, staged and saved actions, and the outcome or the reason nothing was done. After the call, compute greeting time, response latency, dead air, interruptions and yield time.",
+      "notes": [
+        {
+          "at": "2026-11-17T18:36:58Z",
+          "by": "console",
+          "text": "Contract change (CO-01, approved by the human, additive): contracts.md §9.3 audio_metrics gains unanswered_turns = caller turns the agent did not answer, as in §13 (silence guard fired, or turn skipped), each turn counted once even when both happened. The recorder computes it; the console reads it and shows 'unanswered unknown' when missing, never derives it from turns/answered/overlapped. Branch feat/co-01-console-api."
+        }
+      ]
     },
     {
       "id": "CO-01",
       "title": "Console API",
-      "state": "todo",
+      "state": "done",
       "group": "CO",
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
@@ -328,6 +435,21 @@
           "at": "2026-11-08T15:45:24Z",
           "by": "foundation",
           "text": "Contract requirements (FD-02): serve the new events and flags from §8: echo on transcripts (D14), transcript_missing (D15), readback_mismatch (D17), voice_unresponsive (D5), and the audio_metrics fields in §9.3. Any latency figure the API returns comes with its overlap rate and count (D24, §13)."
+        },
+        {
+          "at": "2026-11-17T18:15:57Z",
+          "by": "console",
+          "text": "Plan: read-only FastAPI app at backend/app/console_api.py, own process bound to 127.0.0.1. Routes: /health, /api/calls (summaries + flags filter), /api/calls/{id} (events + summary + audio_metrics), /api/calls/{id}/audio (strict 12-hex id, no traversal), /api/calls/{id}/timing, /api/appointments?date=, /api/overview (counts, latency with overlap rate and n per §13), quota filter. SQLite opened mode=ro. Tests with fixtures written from scratch (JSONL, tiny WAV, temp DB from engine/schema.sql)."
+        },
+        {
+          "at": "2026-11-17T18:30:57Z",
+          "by": "cursor-reviewer",
+          "text": "Independent review (gpt-5.6-sol-high, ask mode, clean git-archive copy, 3 rounds in one chat). R1: 7 blocking. Fixed: missing percentiles shown as 0 and overview p50 of calls with no answered turns; crashes on odd field types / NaN; empty or truncated WAV and non-object timing.json; log purged mid-request; sort by ISO text across offsets. Partly accepted: symlinked recordings now refused (closes in-dir alias); rejected O_NOFOLLOW fd streaming (needs write access to recordings/ on the private host). Rejected: raw latency events in the events array (it is the §8 log passed through for the review timeline, not a reported figure; computed latency always carries overlap and counts); fixture's non-contract latency field corrected. R2: 2 blocking (1e999 / huge ints; file deleted after stat looked empty) + 1 minor (n/a untested), all fixed. R3: VERDICT APPROVE, 1 minor (race test per route), fixed."
+        },
+        {
+          "at": "2026-11-17T18:31:08Z",
+          "by": "console",
+          "text": "Done on branch feat/co-01-console-api (4 commits, not pushed). backend/app/console_api.py: read-only FastAPI, own process (make console), always 127.0.0.1:7861 (CONSOLE_PORT), TrustedHost localhost/127.0.0.1, CORS GET-only for Vite dev origins, SQLite mode=ro (missing DB -> 503, never created). Routes: /health; /api/calls (newest first, limit/offset, flag= any-of the 8 §8 flags, view=quota|staff_today); /api/calls/{id} (summary, raw events incl. echo/transcript_missing/readback_mismatch/voice_unresponsive, audio_metrics, latency block, timing, saved changes/messages/appointments from the DB); /api/calls/{id}/audio (WAV, Range); /api/calls/{id}/timing; /api/appointments?date= (clinic zone, DST-safe, closure, absences); /api/overview (counts by result/reason/flag/channel/language, pooled overlap, per-call p50 distribution, audio sums, diary counts). Flags = outcome.flags ∪ derived from events (provider_error quota, voice_unresponsive, readback_mismatch, call_cap_reached, urgent message) ∪ same_day_urgent from the DB, so a call that crashed before finish() still shows them. Latency only from audio_metrics, always with overlap rate, n answered and unanswered in the §13 text format; raw per-turn latency events are never aggregated. call_id must be 12 lowercase hex; symlinks and paths outside the dirs refused (tested incl. encoded traversal, NUL, symlinks). 41 console tests, make verify green. Shared file: backend/Makefile, one new 'console' target. To check: unanswered = turns - answered - overlapped (assumes the recorder counts turns that way, VO-04); overview p50/p90 are over per-call medians, labelled as such, since §9.3 gives no per-turn data. Worker composer-2.5, 1 round; independent review 3 rounds, approved."
         }
       ]
     },
@@ -356,9 +478,10 @@
     {
       "id": "CO-03",
       "title": "Studio and landing page",
-      "state": "todo",
+      "state": "review",
       "group": "CO",
       "deps": ["CO-01"],
+      "yolo": true,
       "at": "2026-11-03T20:43:34Z",
       "by": "agent",
       "desc": "Landing page with the pitch and a talk button, and a Studio with 6 role cards (new patient, earliest check-up, move an appointment, cancel, toothache, price question) in Spanish and English, each opening a browser call.",
@@ -367,6 +490,26 @@
           "at": "2026-11-08T12:54:51Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D10): the page states, before the mic is requested, that the call is recorded, that the caller talks to an AI, and how long it is kept; it passes its language to the call."
+        },
+        {
+          "at": "2026-11-17T18:37:07Z",
+          "by": "console",
+          "text": "Plan: React + Vite (pnpm) in frontend/: landing page with the pitch and a talk button, Studio with 6 role cards (ES/EN), each opening a browser call to the call server's /api/offer with request_data.language. Before the mic: the call is recorded, you talk to an AI, kept 7 days (REVIEW_LINK_DAYS), and no real names, health data or phone numbers. Known-patient identities: one frontend constant picked from today's seed (default anchor) with a future booked appointment. Additive line in contracts.md §3.3 for the language field; note on VO-02. Proposed Engine task for seed-guaranteed Studio patients."
+        },
+        {
+          "at": "2026-11-17T19:02:38Z",
+          "by": "claude-reviewer",
+          "text": "Model: Claude Sonnet (fresh general-purpose subagent, clean git-archive copy only; code written by composer-2.5). The first attempt with gpt-5.6-sol-high via cursor-agent failed on the usage limit before reviewing. R1: 1 blocking (Start -> Hang up during mic prompt/ICE -> Start: the stale attempt overwrote the new call's handle, leaking the second call's mic) + 6 minor (language switch remounted the panel via key={lang}; iOS autoplay/AudioContext outside a gesture; 1.2 s disconnected grace; build-time retention days and 1-day singular; Studio button-in-listitem a11y and focus; visible patient ids, unrendered hints label, gender agreement). All fixed by the worker (round 2). R2: VERDICT APPROVE, 3 minor (unhandled second play() rejection, tap button left after the call ends, fake timers not restored on failure), fixed by the orchestrator."
+        },
+        {
+          "at": "2026-11-17T19:02:38Z",
+          "by": "console",
+          "text": "Done on branch feat/co-03-studio-landing (4 commits, not pushed; branched from origin/main, does not need CO-01). frontend/: React 19 + Vite 8 + TS, pnpm (pnpm 10 installed globally via npm: Node 26 has no corepack). Hash routes #/ (pitch + call panel + link to Studio) and #/studio (6 bilingual role cards: new_patient, earliest_checkup, move, cancel, toothache, price_question). Language ES/EN from ?lang, saved choice or browser; sets <html lang>; a switch never ends a live call. Call panel: notice next to the button (recorded and transcribed, AI not a person, kept N days then deleted, no real name/health/phone data, use a Studio card, 5-min cap); talk button disabled until 'I understand' is ticked; getUserMedia only on that click (tested). Call client follows call.html's protocol and sends request_data.language (contracts.md §3.3, additive paragraph; note on VO-02). Hang-up safe at every stage, with per-attempt tokens; 6 s disconnected grace; iOS tap-to-hear fallback. Known patients in STUDIO_PATIENTS (frontend/src/studio/patients.ts): p0097, p0181, p0042, p0157 from the default-anchor seed, each with one booked appointment ≥7 days after the anchor; new patient invented (Lucía Ferrer Soler, +44 20 7946 0987). EN-05 proposed to guarantee them in the seed. 36 vitest tests; pnpm build green. Shared files: contracts.md (§3.3 paragraph), .gitignore (*.tsbuildinfo). To check: VITE_REVIEW_LINK_DAYS must equal the server's REVIEW_LINK_DAYS at build time (OP-02); the server does not read request_data.language yet (VO-02); not checked in a real browser (no screenshot tool here)."
+        },
+        {
+          "at": "2026-11-17T19:33:01Z",
+          "by": "engine",
+          "text": "Heads-up: EN-05 will change the seeded ids to the contracts §5.1 formats (patients p0001 -> p_0001, practitioners dent_1 -> d_<slug>, appointments a00001 -> a_ + 8 hex). The patient ids used by the Studio (STUDIO_PATIENTS in frontend/src/studio/patients.ts) will change with EN-05."
         }
       ]
     },
@@ -400,7 +543,7 @@
     {
       "id": "EV-01",
       "title": "30 scenarios",
-      "state": "proposed",
+      "state": "done",
       "group": "EV",
       "deps": ["FD-02"],
       "at": "2026-11-03T20:43:34Z",
@@ -411,6 +554,26 @@
           "at": "2026-11-08T12:54:52Z",
           "by": "foundation",
           "text": "Contract change (FD-02, D7): scenarios no longer have caller_phone; identification is always name + dob. Worth adding a same-day urgency scenario (D1) and a 'no' at confirmation scenario (D11)."
+        },
+        {
+          "at": "2026-11-18T18:53:41Z",
+          "by": "console",
+          "text": "Plan: read the seeded DB (anchor Mon 2026-11-16), write 30 §12 scenarios (es+en, all 10 types plus board's hard cases, D1 same-day urgency, D11/D19 no-at-confirmation) via Argon worker jobs of ~10, a pytest loader that checks §12 shape and seed facts (new->old id map until EN-05), Opus review up to 3 rounds, id mapping noted on EN-05."
+        },
+        {
+          "at": "2026-11-18T19:33:20Z",
+          "by": "console",
+          "text": "Left in Doing: independent review incomplete. Commit f843342 on feat/ev-01-scenarios (local, not pushed): 30 scenarios, evals/scenarios.py, evals/README.md, tests/test_eval_scenarios.py; make verify green (171 passed). Review round 1 (claude-opus-5-5-high via agy): CHANGES REQUESTED, 4 BLOCKING (negated red-flag words in caller lines would trip the matcher; urgent callback offer not scripted; not_identified and caller_declined depended on the agent recording them) + 8 MINOR; all fixed in this commit. Round 2 was refused by the provider (RESOURCE_EXHAUSTED quota, resets in about 5h), so the fixes are not yet independently re-reviewed. Next: re-run round 2 with ~/lanes/console/reviewer-EV-01-2.prompt.md, then finish. Open item for VO-01: the brain prompt should record message_taken when a message was taken (round-1 finding 5)."
+        },
+        {
+          "at": "2026-11-18T19:37:55Z",
+          "by": "claude-subagent",
+          "text": "Review round 2 by claude-subagent (fallback, agy quota exhausted; model opus, fresh Agent-tool subagent, read-only on the clean copy ~/lanes/console/review-EV-01 plus round-1 findings and fixes). All 4 BLOCKING and 8 MINOR round-1 findings RESOLVED, fixes broke nothing, no new findings. VERDICT: APPROVE."
+        },
+        {
+          "at": "2026-11-18T19:37:55Z",
+          "by": "console",
+          "text": "30 eval scenarios (16 es, 14 en) in backend/evals/scenarios/, every §12 type in both languages, the board's hard cases plus same-day urgency (D1) and 'no' at confirmation (D11/D19); facts from the default seed (anchor Mon 2026-11-16), ids in §5.1 formats mapped to today's seed until EN-05 (mapping noted on EN-05). evals/scenarios.py loads and validates; tests/test_eval_scenarios.py builds the seed and checks identities (§5.10 folding) and every expected change against its own free-slot finder. make verify green (171). Commit f843342 on feat/ev-01-scenarios, not pushed. Review: round 1 Opus via agy CHANGES REQUESTED (4 BLOCKING, 8 MINOR, all fixed); round 2 claude-subagent fallback APPROVE. To check: EV-02 should read no_action_reason as the final reason and escalation: null as 'no emergency escalation' (evals/README.md); VO-01 brain prompt should record message_taken when a message is taken."
         }
       ]
     },
@@ -543,11 +706,48 @@
     {
       "id": "VO-06",
       "title": "Report overlap rate next to latency; investigate overlaps and barge-in",
-      "state": "todo",
+      "state": "doing",
       "group": "VO",
       "at": "2026-11-08T11:56:38Z",
       "by": "foundation",
-      "desc": "The latency median leaves out turns where caller and agent overlap, so on speakers it can look better than the call felt (4 of 8 turns overlapped in the Gemini browser test). Show the overlap rate beside p50/p90 in the bench report and in the browser call summary. Then find out why overlaps happen and how barge-in behaves, including speaker echo being heard as caller speech in browser calls. Done when both reports show the overlap rate and the causes are written up with a proposed fix."
+      "desc": "The latency median leaves out turns where caller and agent overlap, so on speakers it can look better than the call felt (4 of 8 turns overlapped in the Gemini browser test). Show the overlap rate beside p50/p90 in the bench report and in the browser call summary. Then find out why overlaps happen and how barge-in behaves, including speaker echo being heard as caller speech in browser calls. Done when both reports show the overlap rate and the causes are written up with a proposed fix.",
+      "notes": [
+        {
+          "at": "2026-11-17T18:57:38Z",
+          "by": "voice",
+          "text": "Plan: one pure helper for the §13 format (answered / overlapped <150 ms / unanswered), used by the bench, call_costs and a bench-log report; the browser page reports overlaps and unanswered turns to the server and shows the §13 line; composer-2.5 writes it, a fresh Claude (sonnet) reviews. Then recompute FD-01's figures with the overlap rate from the existing bench and call logs (read only), run the speakers/headphones browser test with the human, and write up causes and a proposed fix in docs/."
+        },
+        {
+          "at": "2026-11-17T19:01:00Z",
+          "by": "voice",
+          "text": "Question: Human test needed: two browser calls (speakers, then headphones) on the VO-06 branch to observe echo and barge-in; steps given in the voice lane's conversation."
+        },
+        {
+          "at": "2026-11-17T19:02:44Z",
+          "by": "voice",
+          "text": "Contract change (additive, VO-06): contracts.md §8 gains heard_latency.overlapped and a new event heard_unanswered, posted by the browser page and the bench via /api/heard kind=turn|overlap|unanswered. Affects readers of call logs (console CO-01/CO-02, evals EV-04, costs OP-03): ignore or use them; nothing breaks."
+        },
+        {
+          "at": "2026-11-17T19:02:44Z",
+          "by": "claude-reviewer",
+          "text": "Independent review (fresh Claude subagent, model sonnet, read-only on a clean git-archive copy + diff; code by composer-2.5). Round 1: 0 blocking, 10 minor. Fixed 9 (bench posts overlap/unanswered kinds; overlapped flag honoured in heard line; server latency not split into overlaps; '-' instead of 0% initial text; TurnMeter same-tick order; truncated log lines tolerated; §8 documented; trailing newlines). Not changed: n inside each table cell (the full §13 lines are printed under the table). VERDICT: APPROVE."
+        },
+        {
+          "at": "2026-11-17T19:23:52Z",
+          "by": "voice",
+          "text": "Contract update (figures, not meaning): contracts.md §3.1 now quotes FD-01's heard latency in the §13 format over all scripted bench runs of 2026-11-07 (A1 30 calls: p50 1490 / p90 2048 ms, n = 104 answered, overlap 12%, 0 unanswered; B 8 calls: p50 2522 / p90 3204 ms, n = 32 answered, overlap 0%, 0 unanswered). The earlier n = 46 / 28 figures were a subset reported before §13; '0 unanswered' is a floor (the old bench did not record them). Approved by the human."
+        },
+        {
+          "at": "2026-11-17T19:36:11Z",
+          "by": "voice",
+          "text": "End of session 2026-11-17. Branch feat/vo-06-overlap-rate, last commit 1eb4bac (not pushed): 8a84bf9 reporting code (composer-2.5), cf72b1e review fixes, 43e4096 contracts §3.1 figures, 1eb4bac WIP docs/overlap-and-barge-in.md. Independent review of the code: fresh Claude (sonnet) APPROVE round 1 (recorded). make verify green. Left: (1) the human's two browser calls (speakers, headphones; VOICE=cascade from the voice worktree's backend/ with the main .env sourced in a subshell, CALLS_DIR=../data/calls-vo06; script in the conversation: interrupt mid-answer, mid-sentence pause, 10 s silence, goodbye); (2) read data/calls-vo06/, fill the echo section and confirm/adjust the proposed fix in the doc; (3) a review of the finished doc (fresh Claude subagent, the doc is Claude's text so Argon via agy reviews it), then commit and finish. Bench finding so far: 11 of 14 Gemini overlaps are the previous answer resuming after a 1.5-3 s mid-answer stall. Next run: the human browser test."
+        },
+        {
+          "at": "2026-11-17T19:36:14Z",
+          "by": "voice",
+          "text": "Correction to the previous note, step (3): the doc is written by Claude (the orchestrator), so its independent review is Argon via agy (read-only), not a Claude subagent."
+        }
+      ]
     },
     {
       "id": "VO-07",
@@ -557,6 +757,28 @@
       "at": "2026-11-08T11:56:38Z",
       "by": "foundation",
       "desc": "Bring the cascade (B) closer to Gemini's heard latency (p50 2490 ms vs 1490 ms today): Flux eager end-of-turn mode, a short first sentence so speech starts sooner, and opening the Deepgram connection before the call needs it. Also evaluate a streaming cloud TTS to replace the robotic Kokoro voice, but ask before spending money on it. Done when the bench shows the new cascade numbers next to the old ones."
+    },
+    {
+      "id": "EN-05",
+      "title": "Studio patients guaranteed by the seed",
+      "state": "proposed",
+      "group": "EN",
+      "deps": ["EN-01"],
+      "at": "2026-11-17T18:38:31Z",
+      "by": "console",
+      "desc": "The Studio role cards (CO-03) name four known patients from today's seed (default anchor 2026-11-16) in one frontend constant, STUDIO_PATIENTS in frontend/src/studio/patients.ts: p0097 (earliest check-up), p0181 (move), p0042 (cancel), p0157 (toothache), each by first name, both surnames and date of birth. Today they work only because the default seed happens to give each one a future booked appointment.\n\nMake the seed guarantee it: reserve those patient ids (fixed name and date of birth, never reused or renamed by the generator), and guarantee each has a future booked appointment at least 7 days after the anchor, for any anchor. Tests: build over several anchors, including one where the window crosses a DST change (late March or late October) and one over the Christmas closures, and check each reserved patient has such an appointment and that names stay unambiguous (no namesake with the same date of birth). Plus a test that the frontend constant matches the seed (ids, names, dates of birth), read from the .ts file as text so it needs no Node.",
+      "notes": [
+        {
+          "at": "2026-11-17T19:33:01Z",
+          "by": "engine",
+          "text": "Scope addition (human decision, 2026-11-17): move the seed's ids to the contracts §5.1 formats: patients p_ + 4 digits (today p0001), practitioners d_ + slug (today dent_1, hyg_1), appointments a_ + 8 hex (today a00001). The Studio constant STUDIO_PATIENTS in frontend/src/studio/patients.ts must follow the new patient ids. Context: EN-03's store already mints new rows in the §5.1 format (p_NNNN from a forward-only counter, a_ + 8 hex), so until this lands the database mixes both formats."
+        },
+        {
+          "at": "2026-11-18T19:00:29Z",
+          "by": "console",
+          "text": "ID mapping used by the EV-01 eval scenarios (backend/evals/scenarios/*.yaml); please implement exactly this so the scenarios keep pointing at the same rows. Practitioners: dent_1 -> d_iglesias (Dra. Carmen Iglesias Roldán), dent_2 -> d_moya (Dr. Javier Moya Navarro), dent_3 -> d_ferrer (Dra. Lucía Ferrer Castillo), dent_4 -> d_pena (Dr. Andrés Peña Salazar), hyg_1 -> d_torres (Elena Torres Vidal); rule: d_ + first surname, lowercased, accents stripped. Patients: pNNNN -> p_NNNN, same 4 digits (p0097 -> p_0097). Appointments: aNNNNN -> a_ + the same digits left-padded with zeros to 8 (a00648 -> a_00000648), so seeded rows stay valid hex and keep their number. Also keep meta.fixtures (namesakes p0296/p0297 'María García López', fully_booked dent_1 on anchor+2) stable: book_known-es-02, adversarial-es-02 and book_known-es-03 rely on them. tests/test_eval_scenarios.py maps new ids to old only when the new id is missing, so it passes before and after the migration. The seed already has two patients with the same name, so no seed change is needed for EV-01."
+        }
+      ]
     }
   ]
 }
