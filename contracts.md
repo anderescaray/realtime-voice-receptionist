@@ -86,6 +86,8 @@ The `none` stub is exempt from 1 to 7: it says nothing, has no prompt, no brain,
 | `session.greeting` | str | session | Set by `CallSession.start()` from the `greeting.<lang>` entry of the active clip set's `clips/<voice_set>/manifest.json` (§6.1; the `CLIPS_VOICE_SET` set when that override is on), in the starting language. The plumbing logs it as an agent `transcript` when it plays the `greeting` clip |
 | `session.language` | `"es"` \| `"en"` | call server at start; then the voice layer, through `session.set_language(lang)` | Starts as the language of the page the call came from (`es` if none), so the opening disclosure is in a language the visitor reads. The cascade sets it from the speech-to-text language tag of each final caller transcript; the speech-to-speech layers from the `language` of each `ask_clinic`. A change is logged as `language_changed`. Tools, the brain and fixed phrases read it; nothing else writes it |
 
+**How the page passes its language (CO-03).** The browser page sends it in the `/api/offer` body as `request_data: {"language": "es" | "en"}`, next to `sdp` and `type`. It goes inside `request_data` because Pipecat's `SmallWebRTCRequest.from_dict` refuses unknown top-level keys. The call server reads it at call start; a missing or unknown value means `es`. (To read on the server: VO-02.)
+
 ### 3.4 What the shared plumbing gives every layer (to build in VO-02 and VO-03)
 
 ```python
