@@ -1,0 +1,777 @@
+version: 1
+note: 'Held-out set, round 2: the round-1 set minus 16 items moved to tuning, plus 16 replacements written without seeing the lists.'
+items:
+- id: es-001
+  lang: es
+  turns:
+  - no puedo respirar
+  expect:
+  - red_flag_breathing
+- id: es-002
+  lang: es
+  turns:
+  - me falta el aire y cada vez me cuesta más cogerlo
+  expect:
+  - red_flag_breathing
+- id: es-003
+  lang: es
+  turns:
+  - eh tengo mucha dificultad para respirar desde que salí del dentista
+  expect:
+  - red_flag_breathing
+- id: es-004
+  lang: es
+  turns:
+  - siento que se me cierra la garganta y apenas puedo respirar
+  expect:
+  - red_flag_breathing
+- id: es-005
+  lang: es
+  turns:
+  - mi marido está respirando muy mal como si no le entrara aire
+  expect:
+  - red_flag_breathing
+- id: es-006
+  lang: es
+  turns:
+  - pues no sé qué pasa pero estoy jadeando y me ahogo
+  expect:
+  - red_flag_breathing
+- id: es-007
+  lang: es
+  turns:
+  - el niño intenta coger aire pero casi no puede respirar
+  expect:
+  - red_flag_breathing
+- id: es-009
+  lang: es
+  turns:
+  - tengo la cara inflamada y treinta y nueve de temperatura
+  expect:
+  - red_flag_swelling_fever
+- id: es-010
+  lang: es
+  turns:
+  - me ha salido un flemon enorme y tengo fiebre de treinta y ocho y medio
+  expect:
+  - red_flag_swelling_fever
+- id: es-011
+  lang: es
+  turns:
+  - llevo con fiebre desde anoche y ahora se me está hinchando la mandíbula
+  expect:
+  - red_flag_swelling_fever
+- id: es-012
+  lang: es
+  turns:
+  - mi hija tiene el carrillo como un globo y está con mucha fiebre
+  expect:
+  - red_flag_swelling_fever
+- id: es-013
+  lang: es
+  turns:
+  - se me ha inflamado toda esta parte de la cara y el termómetro marca treinta y nueve
+  expect:
+  - red_flag_swelling_fever
+- id: es-014
+  lang: es
+  turns:
+  - tengo hinchazon debajo de la mandibula y fiebre con escalofrios
+  expect:
+  - red_flag_swelling_fever
+- id: es-015
+  lang: es
+  turns:
+  - desde esta mañana tengo media cara bastante hinchada
+  - sí y también tengo fiebre casi treinta y nueve
+  expect:
+  - red_flag_swelling_fever
+- id: es-016
+  lang: es
+  turns:
+  - estoy con fiebre y temblores desde ayer
+  - y ahora noto la encía y el lado izquierdo de la cara muy inflamados
+  expect:
+  - red_flag_swelling_fever
+- id: es-017
+  lang: es
+  turns:
+  - me han dado un balonazo en toda la boca y me duele muchísimo
+  expect:
+  - red_flag_trauma
+- id: es-018
+  lang: es
+  turns:
+  - he tenido un accidente de coche y me he golpeado la cara contra el volante
+  expect:
+  - red_flag_trauma
+- id: es-019
+  lang: es
+  turns:
+  - me caí por las escaleras y di con los dientes contra el suelo
+  expect:
+  - red_flag_trauma
+- id: es-020
+  lang: es
+  turns:
+  - mi hijo se cayó de la bici y se pegó en la boca con el manillar
+  expect:
+  - red_flag_trauma
+- id: es-021
+  lang: es
+  turns:
+  - jugando me dieron un codazo en la mandíbula y noto un diente raro
+  expect:
+  - red_flag_trauma
+- id: es-022
+  lang: es
+  turns:
+  - la puerta me golpeó de lleno en la cara y se me ha partido un diente
+  expect:
+  - red_flag_trauma
+- id: es-023
+  lang: es
+  turns:
+  - me dieron un golpe en la boca y llevo media hora sangrando sin parar
+  expect:
+  - red_flag_trauma
+  - red_flag_bleeding
+- id: es-024
+  lang: es
+  turns:
+  - mi hija se acaba de caer en el parque
+  - ha aterrizado de cara y se ha golpeado toda la boca
+  expect:
+  - red_flag_trauma
+- id: es-025
+  lang: es
+  turns:
+  - me sacaron una muela y la sangre no deja de salir
+  expect:
+  - red_flag_bleeding
+- id: es-026
+  lang: es
+  turns:
+  - llevo cuarenta minutos sangrando por la encía y no se corta
+  expect:
+  - red_flag_bleeding
+- id: es-027
+  lang: es
+  turns:
+  - tengo la boca llena de sangre sigue saliendo todo el rato
+  expect:
+  - red_flag_bleeding
+- id: es-028
+  lang: es
+  turns:
+  - mi marido está sangrando muchísimo de la boca y no conseguimos pararlo
+  expect:
+  - red_flag_bleeding
+- id: es-030
+  lang: es
+  turns:
+  - usé hilo dental y ahora hay un punto que no deja de sangrar
+  expect:
+  - red_flag_bleeding
+- id: es-032
+  lang: es
+  turns:
+  - me desperté con sangre en la almohada y todavía me sangra la boca sin parar
+  expect:
+  - red_flag_bleeding
+- id: es-033
+  lang: es
+  turns:
+  - me duele una muela una barbaridad no he dormido nada
+  expect: []
+- id: es-034
+  lang: es
+  turns:
+  - creo que tengo un absceso porque me late mucho pero no tengo fiebre
+  expect: []
+- id: es-035
+  lang: es
+  turns:
+  - se me ha hinchado un poco el carrillo pero fiebre no tengo
+  expect: []
+- id: es-036
+  lang: es
+  turns:
+  - tengo fiebre por la gripe pero la cara y las encías están normales
+  expect: []
+- id: es-037
+  lang: es
+  turns:
+  - el agua fría me da una sensibilidad horrible en dos dientes
+  expect: []
+- id: es-038
+  lang: es
+  turns:
+  - masticando pan se me ha roto una esquina de una muela
+  expect: []
+- id: es-039
+  lang: es
+  turns:
+  - me sangran un poquito las encías al cepillarme pero para enseguida
+  expect: []
+- id: es-040
+  lang: es
+  turns:
+  - quería preguntar si tratáis el mal aliento porque me huele fatal la respiración
+  expect: []
+- id: es-041
+  lang: es
+  turns:
+  - puedo respirar por la nariz perfectamente pero al hacerlo noto frío en un diente
+  expect: []
+- id: es-042
+  lang: es
+  turns:
+  - el dolor me vino de golpe mientras estaba viendo la tele
+  expect: []
+- id: es-043
+  lang: es
+  turns:
+  - pues de golpe pensé que igual había apuntado mal la hora de la cita
+  expect: []
+- id: es-044
+  lang: es
+  turns:
+  - ha habido un accidente con mi reserva me habéis puesto dos citas el mismo día
+  expect: []
+- id: es-045
+  lang: es
+  turns:
+  - para el implante hace falta llevar un análisis de sangre
+  expect: []
+- id: es-046
+  lang: es
+  turns:
+  - en el formulario puse mal mi grupo sanguíneo se puede corregir
+  expect: []
+- id: es-048
+  lang: es
+  turns:
+  - tengo la encía inflamada aunque no tengo fiebre ni malestar
+  expect: []
+- id: es-049
+  lang: es
+  turns:
+  - no me está sangrando solo tengo la zona un poco roja
+  expect: []
+- id: es-050
+  lang: es
+  turns:
+  - respiro bien no me falta el aire lo que tengo es dolor al morder
+  expect: []
+- id: es-051
+  lang: es
+  turns:
+  - solo quiero cita
+  expect: []
+- id: es-052
+  lang: es
+  turns:
+  - hola eh quería cambiar la revisión del jueves para la semana que viene
+  expect: []
+- id: es-053
+  lang: es
+  turns:
+  - llamo para cancelar porque al final no puedo ir mañana
+  expect: []
+- id: es-054
+  lang: es
+  turns:
+  - cuánto cuesta más o menos un empaste
+  expect: []
+- id: es-055
+  lang: es
+  turns:
+  - ¿abrís los sábados por la mañana?
+  expect: []
+- id: es-056
+  lang: es
+  turns:
+  - se me ha hinchado la zona de una muela desde ayer
+  - no tengo fiebre y por lo demás me encuentro bien
+  expect: []
+- id: es-057
+  lang: es
+  turns:
+  - quería saber si trabajáis con mi seguro dental
+  expect: []
+- id: es-058
+  lang: es
+  turns:
+  - estoy cerca del metro pero no encuentro la entrada cómo llego
+  expect: []
+- id: es-059
+  lang: es
+  turns:
+  - ¿le digo primero mis apellidos o la fecha de nacimiento?
+  expect: []
+- id: es-060
+  lang: es
+  turns:
+  - me gustaría pedir hora para una limpieza y una revisión general
+  expect: []
+- id: es-061
+  lang: es
+  turns:
+  - la dentadura postiza me roza y quería que me la ajustaran
+  expect: []
+- id: es-062
+  lang: es
+  turns:
+  - la muela del juicio me duele muchísimo pero no tengo hinchazón ni fiebre
+  expect: []
+- id: es-063
+  lang: es
+  turns:
+  - tengo una llaga en la lengua desde hace cuatro días
+  expect: []
+- id: es-064
+  lang: es
+  turns:
+  - se me ha caído un empaste comiendo y ahora noto un hueco
+  expect: []
+- id: es-066
+  lang: es
+  turns:
+  - a mi hija se le mueve un diente de leche eso es normal verdad
+  expect: []
+- id: es-067
+  lang: es
+  turns:
+  - tengo fiebre por un catarro y quería mover la cita dental hasta que se me pase
+  expect: []
+- id: es-068
+  lang: es
+  turns:
+  - tras la anestesia tengo el labio algo hinchado pero no tengo temperatura
+  expect: []
+- id: es-069
+  lang: es
+  turns:
+  - esta mañana vi un poco de sangre al cepillarme pero paró en un minuto
+  expect: []
+- id: es-070
+  lang: es
+  turns:
+  - mi marido necesita renovar la férula porque la suya ya no encaja
+  expect: []
+- id: en-001
+  lang: en
+  turns:
+  - I can't breathe
+  expect:
+  - red_flag_breathing
+- id: en-003
+  lang: en
+  turns:
+  - my breathing is getting harder and I feel like I'm choking
+  expect:
+  - red_flag_breathing
+- id: en-004
+  lang: en
+  turns:
+  - I can barely breathe since the swelling started in my mouth
+  expect:
+  - red_flag_breathing
+- id: en-005
+  lang: en
+  turns:
+  - my husband is gasping and says he can't catch his breath
+  expect:
+  - red_flag_breathing
+- id: en-006
+  lang: en
+  turns:
+  - it feels like my throat is closing I can't get air in properly
+  expect:
+  - red_flag_breathing
+- id: en-007
+  lang: en
+  turns:
+  - my little boy is having trouble breathing and making a wheezy sound
+  expect:
+  - red_flag_breathing
+- id: en-008
+  lang: en
+  turns:
+  - breathin is really difficult like I'm suffocating
+  expect:
+  - red_flag_breathing
+- id: en-009
+  lang: en
+  turns:
+  - my face is swollen and I've got a fever of thirty nine
+  expect:
+  - red_flag_swelling_fever
+- id: en-010
+  lang: en
+  turns:
+  - there's a big lump by my jaw and I'm running a high temperature
+  expect:
+  - red_flag_swelling_fever
+- id: en-013
+  lang: en
+  turns:
+  - the gum and jaw are really inflamed plus my temperature is over thirty eight
+  expect:
+  - red_flag_swelling_fever
+- id: en-014
+  lang: en
+  turns:
+  - my jaw's puffed up and I've got fever and chills
+  expect:
+  - red_flag_swelling_fever
+- id: en-015
+  lang: en
+  turns:
+  - one side of my face has become really swollen
+  - and yeah I've also got a temperature of thirty nine point two
+  expect:
+  - red_flag_swelling_fever
+- id: en-016
+  lang: en
+  turns:
+  - I've been feverish since last night
+  - this morning my gum and the whole right cheek started swelling
+  expect:
+  - red_flag_swelling_fever
+- id: en-017
+  lang: en
+  turns:
+  - someone punched me in the mouth and one of my teeth feels loose
+  expect:
+  - red_flag_trauma
+- id: en-018
+  lang: en
+  turns:
+  - I was in a car accident and hit my face on the dashboard
+  expect:
+  - red_flag_trauma
+- id: en-019
+  lang: en
+  turns:
+  - my son came off his scooter and landed mouth first on the pavement
+  expect:
+  - red_flag_trauma
+- id: en-022
+  lang: en
+  turns:
+  - slipped in the bath and smashed my chin against the side
+  expect:
+  - red_flag_trauma
+- id: en-023
+  lang: en
+  turns:
+  - the airbag hit my mouth during an accident and broke two teeth
+  expect:
+  - red_flag_trauma
+- id: en-024
+  lang: en
+  turns:
+  - I was hit in the mouth and it keeps bleeding it just won't stop
+  expect:
+  - red_flag_trauma
+  - red_flag_bleeding
+- id: en-026
+  lang: en
+  turns:
+  - my gum won't stop bleeding no matter how long I press on it
+  expect:
+  - red_flag_bleeding
+- id: en-028
+  lang: en
+  turns:
+  - my wife is bleeding heavily from her mouth and we can't get it to stop
+  expect:
+  - red_flag_bleeding
+- id: en-031
+  lang: en
+  turns:
+  - I've been spitting blood for two hours and it's still coming
+  expect:
+  - red_flag_bleeding
+- id: en-033
+  lang: en
+  turns:
+  - I've got absolutely awful toothache and couldn't sleep at all
+  expect: []
+- id: en-034
+  lang: en
+  turns:
+  - it feels like an abscess throbbing under the tooth but I don't have a fever
+  expect: []
+- id: en-035
+  lang: en
+  turns:
+  - my cheek is a bit swollen but there's no temperature or anything
+  expect: []
+- id: en-036
+  lang: en
+  turns:
+  - I've got a fever from flu but no swelling in my face or mouth
+  expect: []
+- id: en-037
+  lang: en
+  turns:
+  - cold drinks make this one tooth incredibly sensitive
+  expect: []
+- id: en-038
+  lang: en
+  turns:
+  - I cracked a back tooth while eating popcorn
+  expect: []
+- id: en-039
+  lang: en
+  turns:
+  - my gums bleed a tiny bit when I brush then stop straight away
+  expect: []
+- id: en-040
+  lang: en
+  turns:
+  - can I book something to ask about bad breath
+  expect: []
+- id: en-041
+  lang: en
+  turns:
+  - I'm breathing normally but breathing in cold air makes my tooth zing
+  expect: []
+- id: en-042
+  lang: en
+  turns:
+  - it hit me that I've probably written down the wrong appointment time
+  expect: []
+- id: en-043
+  lang: en
+  turns:
+  - the pain hit all of a sudden while I was sitting at my desk
+  expect: []
+- id: en-044
+  lang: en
+  turns:
+  - there's been an accident with the booking I seem to have two appointments
+  expect: []
+- id: en-045
+  lang: en
+  turns:
+  - do you need my blood group on the medical history form
+  expect: []
+- id: en-046
+  lang: en
+  turns:
+  - I broke my jaw in an accident years ago but today I just need a check-up
+  expect: []
+- id: en-047
+  lang: en
+  turns:
+  - the gum is swollen but I definitely don't have a fever
+  expect: []
+- id: en-048
+  lang: en
+  turns:
+  - I'm not bleeding it's just a red patch near the tooth
+  expect: []
+- id: en-049
+  lang: en
+  turns:
+  - I can breathe fine and I'm not short of breath it's only sore when I chew
+  expect: []
+- id: en-050
+  lang: en
+  turns:
+  - hi um I'd like to book a cleaning for next week
+  expect: []
+- id: en-051
+  lang: en
+  turns:
+  - could I move Friday's appointment to sometime in December
+  expect: []
+- id: en-052
+  lang: en
+  turns:
+  - I need to cancel tomorrow sorry something's come up
+  expect: []
+- id: en-053
+  lang: en
+  turns:
+  - how much do you charge for a white filling
+  expect: []
+- id: en-054
+  lang: en
+  turns:
+  - what time do you close on weekdays
+  expect: []
+- id: en-055
+  lang: en
+  turns:
+  - my gums bled when I brushed this morning
+  - it was only a little and stopped after about a minute
+  expect: []
+- id: en-056
+  lang: en
+  turns:
+  - do you accept private dental insurance or is it self pay
+  expect: []
+- id: en-057
+  lang: en
+  turns:
+  - I'm by the station how do I get to your building from here
+  expect: []
+- id: en-058
+  lang: en
+  turns:
+  - would you like my date of birth first or my surname
+  expect: []
+- id: en-059
+  lang: en
+  turns:
+  - just a routine scale and polish please
+  expect: []
+- id: en-060
+  lang: en
+  turns:
+  - I'd like to know what the options are for whitening
+  expect: []
+- id: en-061
+  lang: en
+  turns:
+  - my denture is rubbing on one side and needs adjusting
+  expect: []
+- id: en-062
+  lang: en
+  turns:
+  - my wisdom tooth is killing me but there's no swelling or fever
+  expect: []
+- id: en-063
+  lang: en
+  turns:
+  - I've had a small ulcer inside my lip since Monday
+  expect: []
+- id: en-064
+  lang: en
+  turns:
+  - an old filling came loose while I was having dinner
+  expect: []
+- id: en-066
+  lang: en
+  turns:
+  - my daughter's baby tooth is wobbly and I wanted to check that's okay
+  expect: []
+- id: en-067
+  lang: en
+  turns:
+  - I've got a flu fever so I need to postpone my dental appointment
+  expect: []
+- id: en-068
+  lang: en
+  turns:
+  - my cheek looks puffy after the injection but I have no temperature
+  expect: []
+- id: en-069
+  lang: en
+  turns:
+  - there was a spot of blood after flossing but it stopped immediately
+  expect: []
+- id: en-070
+  lang: en
+  turns:
+  - my husband needs a replacement night guard because his one has split
+  expect: []
+- id: es-071
+  lang: es
+  turns:
+  - oiga es por mi madre que se le ha hinchado todo el cuello por la muela y dice que le cuesta respirar, que se ahoga un poco
+  expect:
+  - red_flag_breathing
+- id: es-072
+  lang: es
+  turns:
+  - Hola, me quitaron una muela esta mañana y no para de sangrar, he cambiado la gasa como seis veces y sigue chorreando
+  expect:
+  - red_flag_bleeding
+- id: es-073
+  lang: es
+  turns:
+  - mire es mi crio que se le ha caido un diente de leche y lleva una hora echando sangre, no se le corta con nada vamos
+  expect:
+  - red_flag_bleeding
+- id: es-074
+  lang: es
+  turns:
+  - Buenas, me sangran un poquito las encias cuando me cepillo pero luego se me pasa enseguida, queria pedir cita para una limpieza
+  expect: []
+- id: es-075
+  lang: es
+  turns:
+  - eh, tengo el carrillo algo hinchado por la muela del juicio, fiebre no tengo eh, solo queria saber si hay hueco esta semana
+  expect: []
+- id: en-071
+  lang: en
+  turns:
+  - Hi um it's my husband, his jaw's swollen right up and he's sort of wheezing, he says he can't get his breath properly
+  expect:
+  - red_flag_breathing
+- id: en-072
+  lang: en
+  turns:
+  - yeah my face has blown up on the left side by the bad tooth and I've been running a temperature since last night, like thirty nine
+  expect:
+  - red_flag_swelling_fever
+- id: en-073
+  lang: en
+  turns:
+  - Hello, my son's cheek is all puffy and hot and he's got a fever of, um, a hundred and two, he's been shivery all day
+  expect:
+  - red_flag_swelling_fever
+- id: en-074
+  lang: en
+  turns:
+  - Hi I came off my bike this morning and smacked my face on the curb, one of my front teeth is loose and kind of pushed back
+  expect:
+  - red_flag_trauma
+- id: en-075
+  lang: en
+  turns:
+  - my daughter got hit in the mouth with a hockey stick at practice, sorry, a cricket ball I mean, and her tooth's chipped and wobbly
+  expect:
+  - red_flag_trauma
+- id: en-076
+  lang: en
+  turns:
+  - had a wisdom tooth out yesterday and it's still bleeding, I've been biting on gauze for hours and it just won't stop
+  expect:
+  - red_flag_bleeding
+- id: en-077
+  lang: en
+  turns:
+  - Hi, my mum's gums have been bleeding nonstop since lunchtime, she's on blood thinners and it's soaking right through the tissues
+  expect:
+  - red_flag_bleeding
+- id: en-078
+  lang: en
+  turns:
+  - uh yeah the sock it where they pulled my molar keeps filling up with blood, I can't get it to stop no matter what I do
+  expect:
+  - red_flag_bleeding
+- id: en-079
+  lang: en
+  turns:
+  - Hello? I've got blood pouring out of my mouth after the extraction, it's been like three hours and it won't settle at all
+  expect:
+  - red_flag_bleeding
+- id: en-080
+  lang: en
+  turns:
+  - hi so I had a tooth taken out this afternoon at another dentist
+  - and it's still bleeding loads, I've pressed on it for ages and it just keeps coming
+  expect:
+  - red_flag_bleeding
+- id: en-081
+  lang: en
+  turns:
+  - Hiya, I bit into a crusty roll and cracked a filling, no pain really, a tiny bit of blood from the gum but it stopped straight away
+  expect: []

@@ -84,6 +84,15 @@ def test_fever_then_swelling_across_turns() -> None:
     assert tracker.feed("and my cheek is swollen now") == ["red_flag_swelling_fever"]
 
 
+def test_bleeding_then_wont_stop_across_turns() -> None:
+    tracker = redflags.RedFlagTracker()
+    assert tracker.feed("my gums started bleeding earlier") == []
+    assert tracker.feed("it's been an hour and it still hasn't stopped") == ["red_flag_bleeding"]
+    es_tracker = redflags.RedFlagTracker()
+    assert es_tracker.feed("me empezo a salir sangre de la herida") == []
+    assert es_tracker.feed("y llevo una hora apretando pero no se corta") == ["red_flag_bleeding"]
+
+
 def test_tracker_is_per_call() -> None:
     first = redflags.RedFlagTracker()
     assert first.feed("tengo la cara hinchada") == []
@@ -158,3 +167,142 @@ def test_module_records_that_a_dentist_must_validate_the_list() -> None:
     doc = redflags.__doc__ or ""
     assert "without clinical review" in doc
     assert "licensed dentist" in doc
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I didn't fall, someone punched me in the mouth and my tooth is loose",
+        "no me cai, me pegaron un punetazo en la boca y tengo el diente suelto",
+        "No, I had a fall and broke my front tooth",
+        "he was hit in the mouth by accident and his lip is bleeding",
+        "le dio un codazo en la boca por accidente y le sangra",
+        "years ago I broke my nose, and now I fell and my tooth is out",
+        "hace una semana me pusieron un empaste y hoy me he caido y me he roto la paleta",
+        "he fell off his bike, his crown came off and his lip is bleeding",
+    ],
+)
+def test_a_denial_or_past_event_never_hides_a_real_blow(text: str) -> None:
+    """Cancels remove only their own words; `past` cancels only their own clause."""
+    assert "red_flag_trauma" in redflags.match(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "no me ha dejado de sangrar en toda la tarde",
+        "nunca ha dejado de sangrar la herida",
+        "it never really stopped bleeding since the extraction",
+        "la encia no sangra pero el hueco de la muela no para de sangrar",
+        "it stopped bleeding earlier and now it started bleeding again and won't stop",
+    ],
+)
+def test_a_negated_or_partial_stop_still_fires_bleeding(text: str) -> None:
+    assert "red_flag_bleeding" in redflags.match(text)
+
+
+def test_other_cancels_stay_local() -> None:
+    assert redflags.match("i have bad breath and now i cant breathe properly") == [
+        "red_flag_breathing"
+    ]
+    assert redflags.match("she isn't breathing normally and her throat is closing") == [
+        "red_flag_breathing"
+    ]
+    assert redflags.match(
+        "my tooth is sensitive to cold and I have a fever and my face is swollen"
+    ) == ["red_flag_swelling_fever"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "es una urgencia, me duele mucho la muela",
+        "comiendo una hogaza de pan se me rompio una muela",
+        "a partir de las diez me viene bien",
+        "I have a massive toothache",
+        "I chipped a tooth eating an artichoke",
+        "tomo anticoagulantes y me duele la muela",
+        "i can't stop crying, my tooth hurts so much",
+        "i fell asleep with a toothache",
+    ],
+)
+def test_words_inside_other_words_do_not_fire(text: str) -> None:
+    assert redflags.match(text) == []
+
+
+def test_blow_then_injury_across_turns() -> None:
+    tracker = redflags.RedFlagTracker()
+    assert tracker.feed("my son fell off the swing") == []
+    assert tracker.feed("his front tooth is loose now") == ["red_flag_trauma"]
+    es_tracker = redflags.RedFlagTracker()
+    assert es_tracker.feed("me he caido por las escaleras") == []
+    assert es_tracker.feed("y tengo un diente roto") == ["red_flag_trauma"]
+
+
+def test_an_ordinary_later_turn_does_not_fire_again() -> None:
+    tracker = redflags.RedFlagTracker()
+    assert tracker.feed("tengo la cara hinchada y 38 de fiebre") == ["red_flag_swelling_fever"]
+    assert tracker.feed("si, gracias") == []
+    assert tracker.feed("me llamo Ana") == []
+
+
+def test_a_later_cancel_clears_what_was_remembered() -> None:
+    tracker = redflags.RedFlagTracker()
+    assert tracker.feed("me sangran un poco las encias") == []
+    assert tracker.feed("ya ha parado de sangrar, pero llevo una hora con dolor") == []
+    swelling = redflags.RedFlagTracker()
+    assert swelling.feed("tengo la cara hinchada") == []
+    assert swelling.feed("no lo tengo nada hinchado, solo tengo decimas") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "el niño se cayó en el parque y tiene el diente roto",
+        "mi hermano se cayó y se ha roto un diente",
+        "bueno, se ha caído y tiene el diente roto",
+        "my son fell off his bike and broke his front tooth, same thing happened two years ago",
+        "Hace un mes vine a una limpieza y me he dado un golpe en la boca hoy",
+        "I broke my crown when I fell off my bike",
+        "the ball hit me when I was in goal and my tooth is loose",
+    ],
+)
+def test_cancels_start_at_a_word_and_past_stays_in_its_clause(text: str) -> None:
+    assert "red_flag_trauma" in redflags.match(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "My cheek is swollen. No, I don't have a fever.",
+        "Tengo la cara hinchada. No, fiebre no tengo.",
+        "No, se me ha caído un empaste y me duele la muela",
+        "No, hace diez años me di un golpe en la boca",
+        "me dio un pinchazo en la muela al tomar algo frio",
+        "tengo 38 años y me duele la muela",
+    ],
+)
+def test_a_no_before_a_denial_or_another_sense_does_not_void_it(text: str) -> None:
+    assert redflags.match(text) == []
+
+
+def test_a_stop_before_a_fresh_wont_stop_still_fires() -> None:
+    assert redflags.match(
+        "it stopped bleeding for a bit but now it's pouring out and won't stop"
+    ) == ["red_flag_bleeding"]
+    assert redflags.match("it hasnt stopped bleeding") == ["red_flag_bleeding"]
+
+
+def test_trauma_parts_in_either_order_and_a_denied_knock_is_not_forgotten() -> None:
+    tracker = redflags.RedFlagTracker()
+    assert tracker.feed("my son broke his front tooth and his lip is bleeding") == []
+    assert tracker.feed("he tripped and fell in the playground") == ["red_flag_trauma"]
+    denied = redflags.RedFlagTracker()
+    assert denied.feed("my son fell off the swing") == []
+    assert denied.feed("he didn't hit his head but his front tooth is loose") == ["red_flag_trauma"]
+
+
+def test_a_duration_alone_in_a_later_turn_does_not_complete_bleeding() -> None:
+    tracker = redflags.RedFlagTracker()
+    assert tracker.feed("my gums bleed when I brush, I'd like a cleaning") == []
+    assert tracker.feed("can I come Friday? I'm at work all day Thursday") == []

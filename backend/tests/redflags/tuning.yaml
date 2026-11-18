@@ -794,3 +794,334 @@ items:
       - "hi, i wanted an appointment for a check-up"
       - "yes, thursday at ten is fine, thank you"
     expect: []
+  # --- Moved from the round-1 holdout (contracts §6.2): gaps it revealed ----
+  - id: es-091
+    lang: es
+    turns: ["respirar me cuesta muchísimo estoy como aogando"]
+    expect: [red_flag_breathing]
+  - id: es-092
+    lang: es
+    turns: ["el hueco de la extracción ha vuelto a sangrar y no hay manera de que pare"]
+    expect: [red_flag_bleeding]
+  - id: es-093
+    lang: es
+    turns: ["he gastado varias gasas se empapan enseguida y sigo sangrando después de dos horas"]
+    expect: [red_flag_bleeding]
+  - id: es-094
+    lang: es
+    turns: ["hace años me rompí la nariz en una caída pero ahora llamo por una limpieza"]
+    expect: []
+  - id: es-095
+    lang: es
+    turns: ["mordí un hueso de aceituna y se me astilló un diente pero no me di ningún golpe"]
+    expect: []
+  - id: en-091
+    lang: en
+    turns: ["um I'm really struggling to get enough air right now"]
+    expect: [red_flag_breathing]
+  - id: en-092
+    lang: en
+    turns: ["I've had a fever all night and now the side of my face is puffing up"]
+    expect: [red_flag_swelling_fever]
+  - id: en-093
+    lang: en
+    turns: ["my daughter's cheek is huge and she's burning up"]
+    expect: [red_flag_swelling_fever]
+  - id: en-094
+    lang: en
+    turns: ["my husband walked into a cupboard door and took the corner right on his jaw"]
+    expect: [red_flag_trauma]
+  - id: en-095
+    lang: en
+    turns: ["I got a football straight in the face and now my front tooth is crooked"]
+    expect: [red_flag_trauma]
+  - id: en-096
+    lang: en
+    turns: ["the extraction site has been bleeding nonstop for over an hour"]
+    expect: [red_flag_bleeding]
+  - id: en-097
+    lang: en
+    turns: ["there's blood constantly filling my mouth and it's not slowing down"]
+    expect: [red_flag_bleeding]
+  - id: en-098
+    lang: en
+    turns: ["I keep changing the gauze but it's soaked through every few minutes"]
+    expect: [red_flag_bleeding]
+  - id: en-099
+    lang: en
+    turns: ["this socket started bleeding again and it simply will not clot"]
+    expect: [red_flag_bleeding]
+  - id: en-100
+    lang: en
+    turns: ["my gums started bleeding earlier", "it's been nearly an hour now and they still haven't stopped"]
+    expect: [red_flag_bleeding]
+  - id: en-101
+    lang: en
+    turns: ["I chipped a tooth biting hard toast no knock or accident"]
+    expect: []
+
+  # --- Round-2 additions: Spanish -------------------------------------------
+  - id: es-096
+    lang: es
+    turns: ["oye que no me entra suficiente aire al respirar y me estoy aogando con la flema"]
+    expect: [red_flag_breathing]
+  - id: es-097
+    lang: es
+    turns: ["respirar le cuesta un monton a mi abuelo desde que se le inflamo el cuello"]
+    expect: [red_flag_breathing]
+  - id: es-098
+    lang: es
+    turns: ["estoy como asfixiandome no consigo coger aire bien por la hinchazon"]
+    expect: [red_flag_breathing]
+  - id: es-099
+    lang: es
+    turns: ["se me esta cerrando la garganta por momentos y tragar me cuesta horrores"]
+    expect: [red_flag_breathing]
+  - id: es-100
+    lang: es
+    turns: ["llevo toda la noche ardiendo en fiebre y ahora se me esta hinchando el moflete"]
+    expect: [red_flag_swelling_fever]
+  - id: es-101
+    lang: es
+    turns: ["el nino esta muy caliente al tacto quema un monton y tiene la mejilla enorme"]
+    expect: [red_flag_swelling_fever]
+  - id: es-102
+    lang: es
+    turns:
+      - "ayer empece con calentura y escalofrios"
+      - "y hoy me he levantado con media cara deformada del flemon"
+    expect: [red_flag_swelling_fever]
+  - id: es-103
+    lang: es
+    turns: ["mi marido tiene treinta y ocho y medio y un bulto enorme debajo de la mandibula"]
+    expect: [red_flag_swelling_fever]
+  - id: es-104
+    lang: es
+    turns: ["le tocas la frente y esta ardiendo ademas tiene el carrillo super gordo"]
+    expect: [red_flag_swelling_fever]
+  - id: es-105
+    lang: es
+    turns: ["mi marido iba mirando el movil se ha chocado contra una puerta y se ha dado en toda la mandibula"]
+    expect: [red_flag_trauma]
+  - id: es-106
+    lang: es
+    turns: ["me dieron con una pelota en toda la cara jugando al tenis y tengo la paleta torcida"]
+    expect: [red_flag_trauma]
+  - id: es-107
+    lang: es
+    turns: ["la nina se ha tragado la esquina de la mesa y tiene el diente de delante suelto"]
+    expect: [red_flag_trauma]
+  - id: es-108
+    lang: es
+    turns: ["en el recreo le pegaron un cabezazo en la boca y se le ha metido un diente para dentro"]
+    expect: [red_flag_trauma]
+  - id: es-109
+    lang: es
+    turns: ["me resbale en la ducha me di con el grifo en los dientes y se me ha saltado un diente"]
+    expect: [red_flag_trauma]
+  - id: es-110
+    lang: es
+    turns: ["la herida de la muela que me quitaron ha vuelto a sangrar y no hay forma de pararlo"]
+    expect: [red_flag_bleeding]
+  - id: es-111
+    lang: es
+    turns: ["se me llena la boca de sangre constantemente y esto no va a menos"]
+    expect: [red_flag_bleeding]
+  - id: es-112
+    lang: es
+    turns: ["llevo ya cuatro gasas todas salen empapadas a los pocos minutos"]
+    expect: [red_flag_bleeding]
+  - id: es-113
+    lang: es
+    turns: ["el hueco de la muela del juicio sigue sangrando despues de mas de una hora y no coagula"]
+    expect: [red_flag_bleeding]
+  - id: es-114
+    lang: es
+    turns:
+      - "me empezo a salir sangre de la encia hace un rato"
+      - "y llevo casi una hora apretando con una gasa pero todavia no ha parado"
+    expect: [red_flag_bleeding]
+  - id: es-115
+    lang: es
+    turns:
+      - "esta manana me sacaron dos muelas y me sangraba un poco"
+      - "pero es que sigue sin cortarse despues de dos horas"
+    expect: [red_flag_bleeding]
+  - id: es-116
+    lang: es
+    turns: ["por mas que muerdo el algodon se empapa enseguida y la sangre sale de continuo"]
+    expect: [red_flag_bleeding]
+  - id: es-117
+    lang: es
+    turns: ["se me han soltado los puntos del implante y sangra sin descanso no logro cortarlo"]
+    expect: [red_flag_bleeding]
+  - id: es-118
+    lang: es
+    turns: ["estoy escupiendo bocanadas de sangre desde hace media hora y no se detiene"]
+    expect: [red_flag_bleeding]
+  - id: es-119
+    lang: es
+    turns: ["hace meses tuve una caida con la bici y me arreglaron la paleta pero llamo para cambiar mi cita"]
+    expect: []
+  - id: es-120
+    lang: es
+    turns: ["de chaval me parti un diente en un accidente de moto y queria presupuesto para un implante"]
+    expect: []
+  - id: es-121
+    lang: es
+    turns: ["comiendo turron duro se me ha rajado una muela pero no ha habido ningun golpe ni caida"]
+    expect: []
+  - id: es-122
+    lang: es
+    turns: ["se me ha partido un trozo de diente masticando kikos sin golpe ni nada"]
+    expect: []
+  - id: es-123
+    lang: es
+    turns: ["me sangro un poquito la encia al pasar el cepillo pero ya ha parado de sangrar"]
+    expect: []
+
+  # --- Round-2 additions: English -------------------------------------------
+  - id: en-102
+    lang: en
+    turns: ["i can barely get any air in my throat feels like it's swelling shut"]
+    expect: [red_flag_breathing]
+  - id: en-103
+    lang: en
+    turns: ["my dad is fighting for air and keeps choking on his saliva"]
+    expect: [red_flag_breathing]
+  - id: en-104
+    lang: en
+    turns: ["im really short of breath since this swelling spread down my neck"]
+    expect: [red_flag_breathing]
+  - id: en-105
+    lang: en
+    turns: ["she's having a hard time getting enough air and struggling to swallow water"]
+    expect: [red_flag_breathing]
+  - id: en-106
+    lang: en
+    turns: ["ive been burning up with a temperature since last night and now my jaw is puffing up"]
+    expect: [red_flag_swelling_fever]
+  - id: en-107
+    lang: en
+    turns: ["my little boy feels boiling hot to the touch and his left cheek is massive"]
+    expect: [red_flag_swelling_fever]
+  - id: en-108
+    lang: en
+    turns:
+      - "i started getting chills and a fever yesterday evening"
+      - "and this morning the whole side of my face has blown up"
+    expect: [red_flag_swelling_fever]
+  - id: en-109
+    lang: en
+    turns: ["her forehead is red hot and she's got a huge lump on her bottom gum"]
+    expect: [red_flag_swelling_fever]
+  - id: en-110
+    lang: en
+    turns: ["he's had a high temp all morning and now his cheek looks enormous"]
+    expect: [red_flag_swelling_fever]
+  - id: en-111
+    lang: en
+    turns: ["i walked straight into a glass door in the dark and banged my front teeth really hard"]
+    expect: [red_flag_trauma]
+  - id: en-112
+    lang: en
+    turns: ["my son took a cricket ball right in the mouth and one tooth is pushed back"]
+    expect: [red_flag_trauma]
+  - id: en-113
+    lang: en
+    turns: ["she ran into the corner of the kitchen counter and caught it right on her chin and jaw"]
+    expect: [red_flag_trauma]
+  - id: en-114
+    lang: en
+    turns: ["got hit in the face during five a side football and my front tooth has gone all crooked"]
+    expect: [red_flag_trauma]
+  - id: en-115
+    lang: en
+    turns: ["a heavy gate swung back and smacked him in the mouth now two teeth are super wobbly"]
+    expect: [red_flag_trauma]
+  - id: en-116
+    lang: en
+    turns: ["my kid caught an elbow to the jaw at training and says his teeth don't line up"]
+    expect: [red_flag_trauma]
+  - id: en-117
+    lang: en
+    turns: ["the socket where my molar came out started bleeding again and there's no way to make it stop"]
+    expect: [red_flag_bleeding]
+  - id: en-118
+    lang: en
+    turns: ["blood keeps filling up my mouth non stop and it isn't slowing down at all"]
+    expect: [red_flag_bleeding]
+  - id: en-119
+    lang: en
+    turns: ["ive gone through six cotton pads in twenty minutes they just soak right through"]
+    expect: [red_flag_bleeding]
+  - id: en-120
+    lang: en
+    turns: ["my extraction wound has been oozing blood constantly for over two hours and won't clot"]
+    expect: [red_flag_bleeding]
+  - id: en-121
+    lang: en
+    turns:
+      - "the gum around that extraction started bleeding after dinner"
+      - "ive been biting on a pad for forty minutes and it still hasn't stopped"
+    expect: [red_flag_bleeding]
+  - id: en-122
+    lang: en
+    turns:
+      - "there was quite a bit of blood coming from my wisdom tooth site earlier"
+      - "and it just refuses to clot or slow down"
+    expect: [red_flag_bleeding]
+  - id: en-123
+    lang: en
+    turns: ["i keep swapping the gauze roll every few minutes because it's completely drenched"]
+    expect: [red_flag_bleeding]
+  - id: en-124
+    lang: en
+    turns: ["the bleeding from my gum surgery started up again and nothing is stopping it"]
+    expect: [red_flag_bleeding]
+  - id: en-125
+    lang: en
+    turns: ["my mouth is constantly filling with fresh blood and i have to keep spitting it out"]
+    expect: [red_flag_bleeding]
+  - id: en-126
+    lang: en
+    turns: ["it's been bleeding continuously for nearly three hours now no matter how hard i press"]
+    expect: [red_flag_bleeding]
+  - id: en-127
+    lang: en
+    turns: ["the stitches came loose and the extraction site will not stop bleeding"]
+    expect: [red_flag_bleeding]
+  - id: en-128
+    lang: en
+    turns:
+      - "my mum had a tooth pulled today and it's bleeding"
+      - "we've held pressure on it for ages and it's still going"
+    expect: [red_flag_bleeding]
+  - id: en-129
+    lang: en
+    turns: ["this gap where the tooth was taken out just will not form a clot and keeps pouring"]
+    expect: [red_flag_bleeding]
+  - id: en-130
+    lang: en
+    turns: ["a few years ago i broke my jaw in a fall on the ice anyway id like to book a scale and polish"]
+    expect: []
+  - id: en-131
+    lang: en
+    turns: ["months ago i got hit in the mouth playing rugby and had a root canal now i just need a check up"]
+    expect: []
+  - id: en-132
+    lang: en
+    turns: ["back in school i chipped my front tooth in an accident and i want to ask about a veneer"]
+    expect: []
+  - id: en-133
+    lang: en
+    turns: ["a piece of my back molar snapped off chewing a toffee no blow or fall or anything"]
+    expect: []
+  - id: en-134
+    lang: en
+    turns: ["my tooth cracked while eating popcorn there was no hit or accident"]
+    expect: []
+  - id: en-135
+    lang: en
+    turns: ["the socket bled a tiny bit after lunch but it has already stopped bleeding now"]
+    expect: []

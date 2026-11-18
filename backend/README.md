@@ -51,3 +51,31 @@ works with every `VOICE=`, and saves each call as a stereo WAV under
 `recordings/bench/<voice>/<call_id>.wav` (git-ignored): the caller on the left, the
 agent on the right, on one timeline as the caller heard it, so gaps and overlaps are
 audible.
+
+## Red-flag matcher
+
+`app/redflags.py` checks every final caller transcript for the four red flags of
+contracts §6.2 (trouble breathing, swelling with fever, a blow or accident to the face
+or mouth, bleeding that will not stop). It errs towards firing. Its phrase lists are
+tuned on `tests/redflags/tuning.yaml` and measured on `tests/redflags/holdout.yaml`, a
+set written before the lists and never used to change them:
+
+```bash
+uv run python -m scripts.redflag_eval tests/redflags/holdout.yaml
+```
+
+| Holdout measurement | Recall (red-flag phrases) | False alarms (ordinary phrases) |
+|---|---|---|
+| Round 1 | 51/64 (79.7%) | 3/76 (3.9%) |
+| Round 2, lists frozen after tuning | 64/64 (100%) | 0/76 (0%) |
+| Round 2, after review fixes | 64/64 (100%) | 2/76 (2.6%) |
+
+Round 2 used a fresh holdout: the 16 round-1 phrases that showed gaps moved to the
+tuning set and 16 new phrases, written without seeing the lists, took their place. The
+other 124 phrases were in both rounds. The review fixes came after the round-2
+measurement and were driven by reviewers' own probe phrases, not by the holdout.
+
+**These lists are a demo default written without clinical review.** A licensed dentist
+must validate the red-flag list (triage fields, phrase lists and the `emergency` text)
+before any real clinic uses the agent, and the validation must be recorded in this
+repository with the reviewer's role and date (contracts §6.2, D13).

@@ -313,6 +313,9 @@ def _read_catalogue(path: Path) -> Catalogue:
                 " ORDER BY start_date, practitioner_id"
             )
         )
+    except (sqlite3.Error, ValueError) as exc:
+        msg = f"cannot read clinic database: {path}"
+        raise CatalogueUnavailable(msg) from exc
     finally:
         conn.close()
 
@@ -522,20 +525,29 @@ def _day_status(day: date, catalogue: Catalogue) -> str:
     if not working:
         return f"closed, nobody works on {WEEKDAYS_EN[day.weekday()]}"
 
+    # Only the people who work that weekday can be away that day.
+    away: list[str] = []
+    away_ids: set[str] = set()
+    working_ids = {p.practitioner_id for p in working}
+    for absence in catalogue.absences:
+        practitioner = catalogue.practitioner(absence.practitioner_id)
+        if practitioner is None or practitioner.practitioner_id not in working_ids:
+            continue
+        if not absence.covers(day):
+            continue
+        away.append(f"{practitioner.name} ({_absence_words(absence.reason, 'en')})")
+        away_ids.add(practitioner.practitioner_id)
+    present = [p for p in working if p.practitioner_id not in away_ids]
+    if not present:
+        return "closed, everyone who works that day is away: " + ", ".join(away)
+
     status = "open"
     if day.weekday() == 5 and len(working) < len(catalogue.practitioners):
         who = ", ".join(
             f"{p.name} {_span_text(tuple((s.start, s.end) for s in p.works_on(5)), 'en')}"
-            for p in working
+            for p in present
         )
         status = f"open, Saturday staff only: {who}"
-
-    away: list[str] = []
-    for absence in catalogue.absences:
-        practitioner = catalogue.practitioner(absence.practitioner_id)
-        if practitioner is None or not absence.covers(day):
-            continue
-        away.append(f"{practitioner.name} ({_absence_words(absence.reason, 'en')})")
     if away:
         status += "; away: " + ", ".join(away)
     return status
