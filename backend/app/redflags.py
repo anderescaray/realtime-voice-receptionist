@@ -22,8 +22,9 @@ only the fires that overlap its own words: a plain negation ("no tengo fiebre", 
 fever") or an unrelated sense of the same word ("golpe de calor", "it hit me that").
 So a denial never hides a different, real report in the same sentence ("I didn't
 fall, someone punched me in the mouth"). A `past` match ("hace anos", "years ago")
-removes the signal's fires in its own clause only; a clause ends at sentence
-punctuation or at a word of contrast or time ("pero", "now", "hoy"). A cancel that
+removes the signal's fires after it (or a few words before it) in its own clause
+only; a clause ends at punctuation or at a word of contrast, time or a new event
+("pero", "y", "now", "hoy"). A cancel never runs across punctuation, and one that
 is itself negated ("no me ha dejado de sangrar") cancels nothing. Playback limits
 and when to run the matcher are the call plumbing's job, not this module's.
 """
@@ -34,6 +35,7 @@ import bisect
 import re
 import unicodedata
 from dataclasses import dataclass
+from typing import NamedTuple
 
 # Reasons, in the priority order of contracts §6.2.
 REASONS = (
@@ -311,7 +313,7 @@ BLOW_ES = Phrases(
         r"hace (\w+ ){0,3}(anos|ano|meses|mes|semanas|semana)",
         r"(anos|meses) atras",
         r"el (ano|mes) pasado",
-        r"de (pequen[oa]|nin[oa]|joven|chaval|adolescente)",
+        r"de (pequen[oa]|nin[oa]|joven|chaval|adolescente)\b",
         r"cuando era (nin[oa]|peque|pequen[oa]|joven|chaval|adolescente)",
         r"en la infancia",
         r"hace (mucho |bastante )?tiempo",
@@ -374,7 +376,7 @@ BLOW_EN = Phrases(
         r"(\w+ )?(years?|months?|weeks?) ago",
         r"(last|previous) (year|month)",
         r"back in (school|college|uni|the day|\d{4})",
-        r"when (i|he|she) was (a )?(kid|child|young|younger|little|boy|girl|teenager|at school)",
+        r"when (i|he|she) was (a )?(kid|child|young|younger|little|boy|girl|teenager)\b",
         r"as a (kid|child|teenager|youngster)",
         r"(a )?long time ago",
         r"nothing recent",
@@ -509,7 +511,8 @@ BLEEDING_EN = Phrases(
 
 HEAVY_ES = Phrases(
     fires=(
-        r"\bno (se )?(me |le |nos )*(para|corta|detiene|frena|cesa)\b"
+        r"\bno (se )?(me |le |nos )*"
+        r"(para|paraba|paro|corta|cortaba|corto|detiene|detenia|frena|frenaba|cesa|cesaba)\b"
         r"(?! (manana|hoy|el|la|las|los|que|mi|ti|una|un|ir|cuando|nada)\b)",
         r"no (consigo|puedo|logro|podemos) (parar\w*|cortar\w*|detener\w*|que pare|que se corte)",
         r"no hay (manera|forma|modo) de (que (pare|se pare|se corte)|parar\w*|cortar\w*)",
@@ -524,7 +527,8 @@ HEAVY_ES = Phrases(
         r"(todavia|aun) sangr",
         r"sangra y sangra",
         r"(todavia|aun) no (ha parado|se ha parado|se ha cortado|para|corta)",
-        r"(sigo|sigue|seguimos|siguen) (sangrando|echando sangre|saliendo|sin cortarse|sin parar)",
+        r"(sigo|sigue|siguen|segu(imos|ia|ian|iamos)) "
+        r"(sangrando|echando sangre|saliendo|sin cortarse|sin parar)",
         r"sigue sin (parar|cortarse|detenerse|coagular)",
         r"no (va a menos|disminuye|baja|afloja|cede|remite)",
         r"(vuelto|vuelve|volvio) a sangrar",
@@ -532,6 +536,10 @@ HEAVY_ES = Phrases(
         r"sin (parar|cesar|descanso|cortarse|detenerse|coagular)",
         r"(de continuo|continuamente|constantemente|constante|ininterrumpid\w*)",
         r"no (se )?(me |le )?coagula",
+        r"no (ha|habia|han|habian) coagulado",
+        r"\bno (se )?(me |le |nos )*"
+        r"(para|paraba|paro|corta|cortaba|corto|detiene|detenia|frena|frenaba|cesa|cesaba) "
+        r"(la sangre|el sangrado|la hemorragia)",
         r"a (chorro|chorros|borbotones|mares|raudales)",
         r"(mucha|muchisima|un monton de|demasiada|abundante) sangre",
         r"bocanadas de sangre",
@@ -548,7 +556,9 @@ HEAVY_ES = Phrases(
 
 HEAVY_EN = Phrases(
     fires=(
-        r"(wo ?n ?t|will not|does ?n ?t|does not) (stop|slow down|clot|ease|let up)",
+        r"(wo ?n ?t|will not|does ?n ?t|does not|would ?n ?t|would not|did ?n ?t|did not) "
+        r"(\w+ ){0,2}(to )?(stop|slow down|clot|ease|let up)\b",
+        r"(do ?n ?t think|not sure|do ?n ?t know if) (\w+ ){0,3}(stopped|clotted)",
         r"(is ?n ?t|is not|can ?t|cannot) (stopping|slowing down|clotting|stop|slow down|clot)",
         r"refuses to (stop|clot|slow down)",
         r"\b(not|is ?n ?t|is not|never) slowing\b",
@@ -572,9 +582,10 @@ HEAVY_EN = Phrases(
         r"blood (\w+ ){0,2}fill(ing|s) (up )?(my|his|her|the) mouth",
         r"fill(ing|s) (up )?(my|his|her|the) mouth",
         r"blood everywhere",
-        r"\b(can ?t|cannot|could ?n ?t|unable to) (get it to |make it )?"
+        r"\b(can ?t|cannot|could ?n ?t|unable to) (\w+ ){0,2}(to )?(get it to |make it )?"
         r"stop (it|the bleeding|the blood|bleeding)\b",
         r"\b(can ?t|cannot|could ?n ?t|unable to) (get it to|make it) stop\b",
+        r"\b(get|make) (the bleeding|the blood|it) (to )?stop\b",
         r"bleed\w* (really |so |very )?(bad|badly|loads|like crazy|like mad|like hell)",
         r"(so much|lots of|loads of) (blood|bleeding)",
         r"(not|wo ?n ?t|will not|does ?n ?t|is ?n ?t) (\w+ ){0,2}(clot|clotting)",
@@ -601,7 +612,11 @@ DURATION_ES = Phrases(
         r"(llevo|lleva|llevamos) (ya |casi |mas de )?(una|media|dos|tres|varias|\d+) (hora|horas)",
         r"(media|una|dos|tres|varias|\d+) (hora|horas) (sangrando|apretando)",
         r"(despues|mas|cerca) de (mas de |casi )?(media|una|dos|tres|varias|\d+) (hora|horas)",
-        r"desde hace (media|una|dos|tres|varias|\d+) (hora|horas)",
+        r"desde hace (\w+ ){0,3}(horas?|dias?)\b",
+        r"\bhace (\w+ ){1,3}(horas?|dias?) que",
+        r"\blleva\w* sangrando (\w+ ){0,3}(horas?|dias?)\b",
+        r"\b(llevo|lleva|llevamos) (\w+ ){0,3}(dias?)\b",
+        r"desde que (me|le|nos|te) (sacaron|quitaron|operaron|hicieron)",
         r"a los (pocos|cinco|diez|dos) minutos",
         r"cada (pocos |dos |tres |cinco )?minutos",
     ),
@@ -611,10 +626,15 @@ DURATION_EN = Phrases(
     fires=(
         r"since (yesterday|last night|this morning|lunch|breakfast)",
         r"all (day|night|morning|afternoon|evening)",
-        r"for (hours|ages)",
+        r"for (hours|ages|days)",
+        r"\bfor (over |more than |nearly |almost |about |around |like |the last |the past )*"
+        r"((an|a|one|two|three|four|five|six|several|a few|a couple of|couple of|\d+) )?"
+        r"(hours?|days?)\b",
+        r"since (the|my|his|her) (extraction|surgery|op|operation|procedure)",
         r"for (over |more than |nearly |almost )?"
         r"(an|a|one|half an|half|two|three|four) (hour|hours)",
-        r"for (over |nearly |almost )?(twenty|thirty|forty|forty five|fifty|\d+) (minutes|mins)",
+        r"for (over |nearly |almost |about |around |like )*"
+        r"(twenty|thirty|forty|forty five|fifty|\d+) (minutes|mins)",
         r"(been|after|over|nearly|almost) (an|a|one|half an|two|three|four) (hour|hours)",
         r"(been|after|over|nearly) (twenty|thirty|forty|forty five|\d+) (minutes|mins)",
         r"every (few |couple of |two |three |five |\d+ )?minutes",
@@ -777,19 +797,19 @@ def normalise(text: str) -> str:
     return " ".join(re.sub(r"[^0-9a-z]+", " ", stripped).split())
 
 
-def _normalise_with_clauses(text: str) -> tuple[str, list[int]]:
-    """The normalised text and the offsets in it where a new clause starts."""
+def _normalise_with_clauses(text: str) -> tuple[str, list[int], list[int]]:
+    """The normalised text, where its clauses start, and where its punctuated parts start."""
     normalised = ""
-    starts = [0]
+    punctuated = [0]
     for part in (normalise(part) for part in _PUNCTUATION_END.split(text)):
         if not part:
             continue
         if normalised:
             normalised += " "
-            starts.append(len(normalised))
+            punctuated.append(len(normalised))
         normalised += part
-    starts.extend(m.start() for m in _CLAUSE_WORDS.finditer(normalised))
-    return normalised, sorted(set(starts))
+    starts = punctuated + [m.start() for m in _CLAUSE_WORDS.finditer(normalised)]
+    return normalised, sorted(set(starts)), punctuated
 
 
 def _clause(starts: list[int], pos: int) -> int:
@@ -809,18 +829,50 @@ def _negated(normalised: str, start: int) -> bool:
     return len(before) >= 2 and before[-2] in _NEGATORS and before[-1] in _BETWEEN
 
 
+class _Cancel(NamedTuple):
+    start: int
+    end: int
+    forgets: bool  # a denial or an end: the tracker forgets the part
+
+
 def _live_cancels(
-    patterns: tuple[re.Pattern[str], ...], normalised: str
-) -> list[tuple[int, int, bool]]:
-    """(start, end, is a denial or an end) of each cancel that applies."""
+    patterns: tuple[re.Pattern[str], ...], normalised: str, punctuated: list[int]
+) -> list[_Cancel]:
+    """Each cancel that applies: not negated, and not running across punctuation.
+
+    "No, me cai por las escaleras" holds "no me cai" only once the comma is gone, so a
+    cancel that spans the start of a punctuated part cancels nothing.
+    """
     spans = []
     for pattern in patterns:
         for m in pattern.finditer(normalised):
+            if any(m.start() < p < m.end() for p in punctuated):
+                continue
             words = set(m.group(0).split())
             guarded = words & _STATUS_WORDS and not words & _DENIAL_WORDS
             if not guarded or not _negated(normalised, m.start()):
-                spans.append((m.start(), m.end(), bool(words & _FORGET_WORDS)))
+                spans.append(_Cancel(m.start(), m.end(), bool(words & _FORGET_WORDS)))
     return spans
+
+
+_PAST_REACH_BACK = 4  # words before a past phrase that it still covers ("me cai hace anos")
+
+
+def _words_back(normalised: str, pos: int, floor: int) -> int:
+    """The offset `_PAST_REACH_BACK` words before `pos`, never before `floor`."""
+    offset = pos
+    for _ in range(_PAST_REACH_BACK):
+        previous = normalised.rfind(" ", floor, max(offset - 1, floor))
+        offset = floor if previous < 0 else previous + 1
+        if offset <= floor:
+            return floor
+    return offset
+
+
+def _after_past(past_clauses: dict[int, int], clause: int, pos: int) -> bool:
+    """True if `pos` is covered by a past phrase in the same clause: after it, or at
+    most a few words before it."""
+    return clause in past_clauses and pos >= past_clauses[clause]
 
 
 def _scan(text: str) -> tuple[frozenset[str], frozenset[str]]:
@@ -828,35 +880,53 @@ def _scan(text: str) -> tuple[frozenset[str], frozenset[str]]:
 
     A `cancels` match removes only the fires that overlap its own words, so "I didn't
     fall, someone punched me in the mouth" keeps "punched". A `past` match removes
-    the signal's fires in its own clause, unless that clause is about now, so "years
-    ago I broke my nose, but now I fell" keeps "now I fell". The second set holds the
+    the signal's fires that come after it in its own clause, or a few words before it
+    ("me cai hace diez anos"), unless that clause is about now. So "years ago I broke
+    my nose, but now I fell" keeps "now I fell", and "he fell off his bike same thing
+    happened two years ago" keeps "fell". The second set holds the
     signals that a denial or an end ("no fever", "ya ha parado de sangrar") took
     away; only those make the tracker forget a remembered part.
     """
-    normalised, starts = _normalise_with_clauses(text)
+    normalised, starts, punctuated = _normalise_with_clauses(text)
     found: set[str] = set()
     denied: set[str] = set()
+    fire_ends: dict[str, int] = {}
+    bleeding_cancels: list[_Cancel] = []
     for name, (fires, cancels, past) in _COMPILED.items():
-        local = _live_cancels(cancels, normalised)
-        past_clauses = set()
+        local = _live_cancels(cancels, normalised, punctuated)
+        if name == "bleeding":
+            bleeding_cancels = local
+        # clause index -> from where a past phrase in it covers the clause
+        past_clauses: dict[int, int] = {}
         for pattern in past:
             for m in pattern.finditer(normalised):
+                if any(m.start() < p < m.end() for p in punctuated):
+                    continue  # like a cancel, a past phrase never runs across punctuation
                 index = _clause(starts, m.end() - 1)
                 if not _PRESENT.search(_clause_text(normalised, starts, index)):
-                    past_clauses.add(index)
-        fired = any(
-            not any(a < cb and ca < b for ca, cb, _ in local)
-            and _clause(starts, a) not in past_clauses
+                    reach = _words_back(normalised, m.start(), starts[index])
+                    past_clauses[index] = min(reach, past_clauses.get(index, reach))
+        ends = [
+            b
             for pattern in fires
             for a, b in (m.span() for m in pattern.finditer(normalised))
-        )
-        if fired:
+            if not any(a < c.end and c.start < b for c in local)
+            and not _after_past(past_clauses, _clause(starts, a), a)
+        ]
+        if ends:
             found.add(name)
-        elif any(forget for _, _, forget in local):
+            fire_ends[name] = max(ends)
+        elif any(c.forgets for c in local):
             denied.add(name)
-    # "It stopped bleeding, but now it's pouring and won't stop": a stop said before
-    # a fresh "won't stop" does not take the bleeding away.
-    if "heavy" in found and "bleeding" in denied:
+    # "It stopped bleeding, but now it's pouring and won't stop" or "it wasn't bleeding
+    # this morning but now it won't stop": a denial or an end said before a fresh
+    # "won't stop" does not take the bleeding away. One said after it ("the pain is
+    # constant, no bleeding") still does.
+    if (
+        "heavy" in found
+        and "bleeding" in denied
+        and fire_ends["heavy"] > min(c.start for c in bleeding_cancels if c.forgets)
+    ):
         found.add("bleeding")
         denied.discard("bleeding")
     return frozenset(found), frozenset(denied)
@@ -891,6 +961,12 @@ _REMEMBERED = frozenset({"swelling", "fever", "bleeding", "heavy", "blow", "face
 # A blow is never forgotten: a caller who denies one knock ("he didn't hit his head")
 # may still have had another.
 _NEVER_FORGOTTEN = frozenset({"blow"})
+_PARTS = {
+    "red_flag_breathing": frozenset[str](),
+    "red_flag_swelling_fever": frozenset({"swelling", "fever"}),
+    "red_flag_trauma": frozenset({"blow", "face", "injury"}),
+    "red_flag_bleeding": frozenset({"bleeding", "heavy"}),
+}
 
 
 class RedFlagTracker:
@@ -927,4 +1003,8 @@ class RedFlagTracker:
             reasons.add("red_flag_bleeding")
         if current & {"blow", "face", "injury"} and "blow" in both and both & {"face", "injury"}:
             reasons.add("red_flag_trauma")
+        # A red flag that fired uses up its remembered parts, so a later turn about the
+        # same tooth ("can you see me today for the tooth?") does not fire it again.
+        for reason in reasons:
+            self.memory -= _PARTS[reason]
         return [reason for reason in REASONS if reason in reasons]

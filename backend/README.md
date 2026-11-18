@@ -68,12 +68,28 @@ uv run python -m scripts.redflag_eval tests/redflags/holdout.yaml
 |---|---|---|
 | Round 1 | 51/64 (79.7%) | 3/76 (3.9%) |
 | Round 2, lists frozen after tuning | 64/64 (100%) | 0/76 (0%) |
-| Round 2, after review fixes | 64/64 (100%) | 2/76 (2.6%) |
+| Round 2, after review rounds 1-2 | 64/64 (100%) | 2/76 (2.6%) |
+| Round 2, after review round 4 | 64/64 (100%) | 2/76 (2.6%) |
 
 Round 2 used a fresh holdout: the 16 round-1 phrases that showed gaps moved to the
 tuning set and 16 new phrases, written without seeing the lists, took their place. The
-other 124 phrases were in both rounds. The review fixes came after the round-2
-measurement and were driven by reviewers' own probe phrases, not by the holdout.
+other 124 phrases were in both rounds, so only 16 phrases are fresh to round 2. The
+review fixes came after the round-2 measurement and were driven by reviewers' own
+probe phrases, not by the holdout.
+
+**Known limitations.** The matcher prefers firing (decision D2), so some ordinary
+replies fire, and a few phrasings still slip through:
+
+- Missed: a past-time phrase earlier in the same clause as a fresh blow whose time
+  word only comes at the very end ("el diente que me empastaron hace un mes se me ha
+  roto de un golpe en la boca hoy"); a duration given alone in the next turn
+  ("...y le sangra." then "Desde las nueve.").
+- False alarms: a "no" right before a reassurance ("No, respiro bien."); an age or
+  distance read as a temperature ("tengo 38 y la muela inflamada"); food words read
+  as a blow ("una galleta"), "acabo de dar un paseo"; a baby tooth "a punto de
+  caerse"; "dolor constante" in one turn and light gum bleeding in a later one; a
+  blow mentioned early in the call combining with a later toothache even after the
+  caller denies hitting the mouth.
 
 **These lists are a demo default written without clinical review.** A licensed dentist
 must validate the red-flag list (triage fields, phrase lists and the `emergency` text)

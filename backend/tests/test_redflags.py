@@ -306,3 +306,95 @@ def test_a_duration_alone_in_a_later_turn_does_not_complete_bleeding() -> None:
     tracker = redflags.RedFlagTracker()
     assert tracker.feed("my gums bleed when I brush, I'd like a cleaning") == []
     assert tracker.feed("can I come Friday? I'm at work all day Thursday") == []
+
+
+# --- review round 4: round-3 findings ---------------------------------------
+
+
+def test_a_fired_combined_flag_does_not_fire_again_on_later_turns() -> None:
+    tracker = redflags.RedFlagTracker()
+    assert tracker.feed("me he caído por las escaleras y me he roto un diente") == [
+        "red_flag_trauma"
+    ]
+    assert tracker.feed("¿me pueden dar cita hoy para que me miren el diente?") == []
+    assert tracker.feed("no tengo fiebre, solo me duele el diente") == []
+    swelling = redflags.RedFlagTracker()
+    assert swelling.feed("tengo la cara hinchada y fiebre") == ["red_flag_swelling_fever"]
+    assert swelling.feed("la hinchazón es en el lado izquierdo") == []
+    bleeding = redflags.RedFlagTracker()
+    assert bleeding.feed("the socket is bleeding and it won't stop") == ["red_flag_bleeding"]
+    assert bleeding.feed("and my gum is bleeding too") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The pain is constant, no bleeding",
+        "My toothache won't stop, it's not bleeding though",
+        "Me duele la muela de continuo, no me sangra nada",
+        "El dolor es constante, sin sangre",
+    ],
+)
+def test_an_explicit_bleeding_denial_is_not_undone_by_constant_pain(text: str) -> None:
+    assert redflags.match(text) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "it wouldn't stop bleeding",
+        "the bleeding wouldn't stop",
+        "it would not stop bleeding",
+        "it was bleeding and it didn't stop",
+        "the bleeding doesn't seem to stop",
+        "I can't seem to stop the bleeding",
+        "I don't think it's stopped bleeding",
+        "le sangraba la encía y no paraba",
+        "la sangre no paraba",
+        "no se le paraba la sangre",
+        "no se le cortaba la sangre",
+        "seguía sangrando cuando llegamos a casa",
+        "todavía no ha coagulado y le sangra",
+        "it's been bleeding for 2 hours",
+        "bleeding for the last hour",
+        "the gum has been bleeding for about two hours",
+        "it's been bleeding for 3 days",
+        "it's been bleeding since the extraction",
+        "lleva sangrando dos horas",
+        "le sangra desde hace dos días",
+        "sangra desde hace un par de horas",
+        "hace dos horas que le sangra la boca",
+        "no se me paró el sangrado",
+        "no se le detenía el sangrado",
+        "no se me frenaba la sangre",
+        "we couldn't get the bleeding to stop",
+        "it's been bleeding for like 45 minutes",
+        "No sangraba al principio, pero ahora no para",
+        "It wasn't bleeding this morning but now it won't stop",
+        "At first there was no blood, but now it's pouring out and won't stop",
+    ],
+)
+def test_round_three_bleeding_recall(text: str) -> None:
+    assert "red_flag_bleeding" in redflags.match(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Se cayó en el parque de niños y se ha partido un diente",
+        "Se ha caído en la zona de niños y se ha roto una paleta",
+        "My son fell over when he was at school and his front tooth is loose",
+        "No, me caí por las escaleras y me rompí un diente",
+        "No, se cayó en el parque y tiene el diente roto",
+        "No, hit in the face with a ball and my tooth is loose",
+        "Vine hace poco, esta semana me he dado un golpe en la boca",
+        "he fell off his bike same thing happened two years ago",
+        "Me he dado un golpe en el diente que me empastaron hace un año",
+    ],
+)
+def test_round_three_trauma_recall(text: str) -> None:
+    assert "red_flag_trauma" in redflags.match(text)
+
+
+def test_a_denial_does_not_cross_a_comma() -> None:
+    assert redflags.match("No, fever of 39 and my cheek is swollen") == ["red_flag_swelling_fever"]
