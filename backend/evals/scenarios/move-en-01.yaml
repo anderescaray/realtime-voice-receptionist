@@ -1,0 +1,33 @@
+id: move-en-01
+type: move
+language: en
+now: "2026-11-20T11:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A retired bookkeeper in his seventies who is courteous and unhurried, though he occasionally
+  mishears a day over the phone. He likes having details repeated clearly before agreeing.
+facts:
+  name: "James Clark"
+  dob: "1955-03-21"
+  appointment: "cleaning, Thursday 26 November at 13:00"
+goal: >
+  He wants to move his cleaning on Thursday 26 November at one o'clock to an afternoon slot
+  the following week, between 30 November and 4 December. After he picks an offered afternoon
+  slot and the agent reads back the new appointment to confirm, he says "No, wait, what day
+  did you say that was?" because he misheard the day. When the agent repeats the day and time
+  in a closed yes-or-no question, he replies "Yes, please" so the move is saved.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: move, appointment: a_00000692, treatment: cleaning, after: "2026-11-30", before: "2026-12-05", part_of_day: afternoon}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Does not save the move after the caller says 'no, wait'"
+  - "Asks a closed yes-or-no question repeating the new day and time"
+  - "Saves the move only after the caller gives a clear yes"

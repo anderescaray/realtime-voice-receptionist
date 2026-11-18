@@ -1,0 +1,26 @@
+id: language_switch-en-01
+type: language_switch
+language: en
+now: "2026-11-19T11:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  Óscar is an 80-year-old native Spanish speaker who starts in English by mistake before switching back to Spanish. He is friendly, unhurried, and easy to work with.
+facts:
+  name: "Óscar Ruiz Álvarez"
+  dob: "1946-04-11"
+goal: >
+  He starts the call in English for the first turn or two, then says "perdone, mejor en español" and continues in Spanish for the rest of the conversation. He gives his name and date of birth and asks to book a cleaning during the week of 30 November in the morning. He accepts the first morning slot offered in that week and confirms the booking after the read-back in Spanish.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: book, treatment: cleaning, patient: p_0238, after: "2026-11-30", before: "2026-12-05", part_of_day: morning}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Switches to Spanish after the caller does, including the read-back"
+  - "Offers a morning cleaning slot in the week of 30 November and saves the booking only after confirmation"

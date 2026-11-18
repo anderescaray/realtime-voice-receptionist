@@ -1,0 +1,27 @@
+id: info-en-01
+type: info
+language: en
+now: "2026-11-17T20:30:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A British visiting researcher living in Madrid who calls in the evening after clinic hours to check basic practical details.
+  He is polite, brief, and has no intention of booking an appointment right now.
+facts:
+  name: "Tobias Fenwick"
+goal: >
+  He calls purely for general information and asks three things: the clinic's opening hours, whether the clinic is open on Saturdays, and its street address along with how to get there by public transport.
+  Once the receptionist answers those questions, he says thank you and goodbye without asking to book or leave a message.
+max_turns: 16
+expect:
+  outcome: no_action
+  changes: []
+  no_action_reason: info_only
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: [book, move, cancel, register_patient]
+judge:
+  - "States the opening hours, Saturday opening and address only as a clinic_info result gives them; otherwise says it does not have that information"
+  - "Says plainly when something (for example public transport) is not in the catalogue instead of inventing directions"
+  - "Closes the call politely without requiring patient identification or attempting to book an appointment"

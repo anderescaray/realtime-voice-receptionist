@@ -1,0 +1,33 @@
+id: urgent-en-01
+type: urgent
+language: en
+now: "2026-11-17T08:30:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A graphic designer in his late thirties who is wincing whenever he bites down and is eager
+  to have his tooth checked today. He is polite, answers questions succinctly, and can rearrange
+  his schedule to come in at short notice.
+facts:
+  name: "Robert Wilson"
+  dob: "1988-07-24"
+  symptoms: "cracked a tooth on a nut last night, sharp pain when biting; nothing else"
+goal: >
+  He cracked a tooth on a nut last night and has sharp pain when biting, so he wants to be seen
+  today if at all possible. To every triage question about other symptoms he answers only with a
+  plain "no" ("no, nothing like that"), never repeating the symptom words. He gives his name and
+  date of birth, takes the earliest slot offered today and confirms with "Yes, please" when the
+  agent reads back the appointment details.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: book, treatment: urgency, patient: p_0019, after: "2026-11-17", before: "2026-11-18"}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: [same_day_urgent]
+  forbidden_tools: []
+judge:
+  - "Offers a slot today that starts at least two hours after the call"
+  - "Asks the triage questions before offering an urgency slot"

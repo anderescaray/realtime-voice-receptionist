@@ -1,0 +1,32 @@
+id: new_patient-en-01
+type: new_patient
+language: en
+now: "2026-11-18T19:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A Scottish civil engineer who recently relocated to Madrid and does not speak any Spanish.
+  He is polite, concise, and relieved when the receptionist speaks to him in English.
+facts:
+  name: "Hamish Carrow"
+  dob: "1983-09-03"
+  phone: "+442079460902"
+goal: >
+  He is a new patient calling to book a first check-up for next week (23 to 27 November) specifically with Dra. Ferrer, whom a colleague at work recommended.
+  Any day or time next week works for him, and he provides his full name, date of birth, and phone number when asked.
+  He accepts the first slot with Dra. Ferrer that the receptionist offers and clearly says "yes, please" when the day and time are read back.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: register, patient: new}
+    - {action: book, treatment: checkup, patient: new, practitioner: d_ferrer, after: "2026-11-23", before: "2026-11-28"}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Conducts the conversation in English after the caller speaks English"
+  - "Collects full name, date of birth, and phone number to register the new patient before saving the booking"
+  - "Offers a check-up slot specifically with Dra. Lucía Ferrer next week and reads back the day and time before confirming"

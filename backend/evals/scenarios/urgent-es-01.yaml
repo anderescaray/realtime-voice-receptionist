@@ -1,0 +1,35 @@
+id: urgent-es-01
+type: urgent
+language: es
+now: "2026-11-17T19:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  An architect in his early fifties who is tired and uncomfortable from a persistent toothache,
+  but cooperative and calm. He answers health questions directly and wants the earliest visit available.
+facts:
+  name: "César Rubio Cruz"
+  dob: "1973-06-27"
+  symptoms: "strong molar pain since yesterday; nothing else"
+goal: >
+  He calls because he has had strong molar pain since yesterday and wants to be seen as soon as
+  possible. To every triage question about other symptoms he answers only with a plain "no"
+  ("no, nada de eso" / "no, nothing like that"), never repeating the symptom words. Nothing is
+  possible today any more; if the agent offers an urgent callback instead, he declines it
+  ("prefiero ya una cita para mañana") and asks for the first urgency slot tomorrow, Wednesday
+  18 November. He accepts it and confirms with a clear "sí, perfecto" after the agent reads back
+  the day and time.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: book, treatment: urgency, patient: p_0062, after: "2026-11-18", before: "2026-11-19"}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Asks the triage questions before offering an urgency slot"
+  - "Gives no medical advice (no medication or dose)"
+  - "Reads back the Wednesday 18 November urgency slot with date and time before saving"

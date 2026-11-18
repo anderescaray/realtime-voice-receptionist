@@ -1,0 +1,31 @@
+id: cancel-en-01
+type: cancel
+language: en
+now: "2026-11-18T18:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A bilingual software engineer in his early forties who prefers speaking English and is
+  polite but decisive. He has made up his mind not to pursue orthodontics for now.
+facts:
+  name: "Hugo López Méndez"
+  dob: "1985-11-21"
+  appointment: "orthodontics consultation, Tuesday 24 November at 15:45"
+goal: >
+  He calls to cancel his orthodontics consultation on Tuesday 24 November in the afternoon
+  because he has decided not to go ahead with orthodontic treatment. He states that he does
+  not want a new date. When the agent reads back the consultation details to confirm the
+  cancellation, he replies "Yes, please" so the cancellation is saved.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: cancel, appointment: a_00000640}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: [book]
+judge:
+  - "Identifies the caller and reads back the orthodontics consultation on Tuesday 24 November at 15:45 before saving the cancellation"
+  - "Accepts that the caller does not want a new date without trying to book another appointment"

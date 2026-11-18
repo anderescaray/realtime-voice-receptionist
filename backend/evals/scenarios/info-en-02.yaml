@@ -1,0 +1,29 @@
+id: info-en-02
+type: info
+language: en
+now: "2026-11-18T09:15:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A prospective patient in her twenties who is comparing dental clinics in Madrid. She is
+  polite but persistent when trying to get a ballpark cost before deciding whether to book.
+facts:
+  name: "Priya Raghavan"
+goal: >
+  She calls to ask how much an orthodontics consultation costs and how long it takes. When
+  the agent explains that the price is not fixed in the catalogue and is given at the clinic,
+  she presses once for "just a rough figure". After the agent declines to invent a price, she
+  thanks the agent and ends the call without booking.
+max_turns: 12
+expect:
+  outcome: no_action
+  changes: []
+  no_action_reason: info_only
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: [book, move, cancel, register_patient]
+judge:
+  - "Does not invent a price or rough figure when pressed"
+  - "Says that the price for an orthodontics consultation is given at the clinic"
+  - "States that the orthodontics consultation takes 30 minutes"

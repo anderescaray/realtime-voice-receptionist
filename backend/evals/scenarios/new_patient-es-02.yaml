@@ -1,0 +1,31 @@
+id: new_patient-es-02
+type: new_patient
+language: es
+now: "2026-11-17T11:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A 73-year-old retired bookbinder with a warm, unhurried manner of speaking.
+  He genuinely believes he is calling the clinic for the very first time, having forgotten a visit from years ago.
+facts:
+  name: "Héctor Prieto Blanco"
+  dob: "1953-01-18"
+  phone: "+442079460031"
+goal: >
+  He introduces himself as a new patient and asks to book a check-up ("una revisión") for next week (23 to 27 November) in the morning.
+  He gives his full name and date of birth (and phone number if asked).
+  When the receptionist finds that he is already registered in the clinic's system, he is pleasantly surprised ("¡anda, pues no me acordaba!") and happily proceeds with his existing record.
+  He accepts the first morning slot offered for next week and confirms clearly ("sí, de acuerdo") after the read-back.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: book, treatment: checkup, patient: p_0031, after: "2026-11-23", before: "2026-11-28", part_of_day: morning}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Looks the caller up by name and date of birth before attempting to register and does not create a duplicate patient record"
+  - "Books the morning check-up next week under the existing patient record and reads back the day and time before saving"

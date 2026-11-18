@@ -1,0 +1,30 @@
+id: book_known-en-02
+type: book_known
+language: en
+now: "2026-11-16T17:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A 57-year-old project director with a busy work calendar.
+  She speaks polite, articulate English and thinks out loud about her schedule as she plans her week.
+facts:
+  name: "Emily Clark"
+  dob: "1969-01-06"
+goal: >
+  She identifies herself with her full name and date of birth and asks to book a check-up on Thursday 19 November in the afternoon.
+  She picks the first Thursday afternoon slot offered, but when the receptionist reads it back for confirmation, she suddenly remembers a work meeting that afternoon, says "No, wait—I have a meeting on Thursday afternoon," and asks for Friday 20 November in the morning instead.
+  She then accepts the first Friday morning slot offered and confirms clearly with "Yes, that's fine" after the receptionist reads back the Friday appointment.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: book, treatment: checkup, patient: p_0016, after: "2026-11-20", before: "2026-11-21", part_of_day: morning}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Drops the staged Thursday afternoon slot without saving it when the caller declines and asks for Friday instead"
+  - "Reads back the Friday 20 November morning slot and waits for the caller's confirmation before saving"
+  - "Saves only the Friday morning check-up and leaves no Thursday appointment in the schedule"

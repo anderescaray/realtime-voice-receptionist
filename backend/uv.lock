@@ -597,6 +597,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "pipecat-ai", extra = ["anthropic", "deepgram", "google", "kokoro", "webrtc"] },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -612,6 +613,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "pipecat-ai", extras = ["anthropic", "deepgram", "google", "kokoro", "silero", "webrtc"], specifier = "==1.15.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 

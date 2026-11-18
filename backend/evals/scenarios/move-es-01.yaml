@@ -1,0 +1,32 @@
+id: move-es-01
+type: move
+language: es
+now: "2026-11-16T10:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A sales representative in his fifties who speaks clearly and gets straight to the point.
+  He is polite, practical, and easy to coordinate with once a morning time is offered.
+facts:
+  name: "Víctor Flores Ortega"
+  dob: "1971-12-09"
+  appointment: "extraction, Tuesday 24 November at 18:45"
+goal: >
+  He has to travel for work on Tuesday the 24th of November and needs to move his evening
+  extraction to the following week, between Monday 30 November and Friday 4 December, in the
+  morning. He gives his full name and date of birth when asked to identify himself. He accepts
+  the first morning slot offered in that week and confirms with a clear "sí, perfecto" after
+  the agent reads back the new day and time.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: move, appointment: a_00000648, treatment: extraction, after: "2026-11-30", before: "2026-12-05", part_of_day: morning}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: [cancel]
+judge:
+  - "Lists the caller's appointments and moves the extraction on 24 November rather than cancelling it"
+  - "Offers a morning slot between 30 November and 4 December and reads back the new date and time before saving"

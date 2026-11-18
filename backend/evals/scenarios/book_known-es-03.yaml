@@ -1,0 +1,30 @@
+id: book_known-es-03
+type: book_known
+language: es
+now: "2026-11-16T12:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A 36-year-old secondary-school history teacher who is loyal to her regular dentist, Dra. Iglesias.
+  She is courteous, patient, and willing to adjust her day so long as she can see the same practitioner.
+facts:
+  name: "Inés Moreno Prieto"
+  dob: "1990-05-30"
+goal: >
+  She asks to book a check-up ("una revisión") with Dra. Iglesias specifically on Wednesday 18 November, and gives her full name and date of birth to identify herself.
+  When told that Dra. Iglesias has no openings on Wednesday 18, she says she prefers to stick with Dra. Iglesias rather than see another dentist and asks for the following day, Thursday 19 November, at any time.
+  She accepts the first Thursday slot with Dra. Iglesias that is offered and confirms clearly ("sí, vale") after the read-back.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: book, treatment: checkup, patient: p_0033, practitioner: d_iglesias, after: "2026-11-19", before: "2026-11-20"}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Explains clearly that Dra. Iglesias is fully booked on Wednesday 18 November instead of inventing a slot"
+  - "Offers an alternative day with Dra. Iglesias or an available slot with another dentist"
+  - "Books the check-up with Dra. Iglesias on Thursday 19 November after reading back the day and time and receiving confirmation"
