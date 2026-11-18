@@ -18,7 +18,10 @@ CREATE TABLE working_hours (practitioner_id TEXT REFERENCES practitioners,
                    start_local TEXT NOT NULL, end_local TEXT NOT NULL);
 CREATE TABLE closures (date TEXT PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE absences (practitioner_id TEXT REFERENCES practitioners,
-                   start_date TEXT NOT NULL, end_date TEXT NOT NULL, reason TEXT NOT NULL);
+                   start_date TEXT NOT NULL, end_date TEXT NOT NULL, reason TEXT NOT NULL,
+                   start_local TEXT, end_local TEXT,
+                   CHECK ((start_local IS NULL) = (end_local IS NULL)),
+                   CHECK (start_local IS NULL OR start_local < end_local));
 CREATE TABLE patients (patient_id TEXT PRIMARY KEY, first_name TEXT NOT NULL,
                    last_name1 TEXT NOT NULL, last_name2 TEXT, dob TEXT NOT NULL,
                    phone TEXT NOT NULL,
