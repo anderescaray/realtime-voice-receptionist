@@ -478,7 +478,7 @@
     {
       "id": "CO-03",
       "title": "Studio and landing page",
-      "state": "review",
+      "state": "done",
       "group": "CO",
       "deps": ["CO-01"],
       "yolo": true,
