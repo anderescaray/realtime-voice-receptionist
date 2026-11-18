@@ -1,0 +1,27 @@
+id: language_switch-es-01
+type: language_switch
+language: es
+now: "2026-11-24T10:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  Carlos is a 78-year-old retiree who starts the call in hesitant Spanish, searching for words, and feels much more at ease once he switches to English. He is courteous and clear about which appointment he wants to cancel.
+facts:
+  name: "Carlos García"
+  dob: "1948-01-15"
+  appointment: "cleaning, Thursday 3 December at 14:30"
+goal: >
+  He begins in hesitant Spanish for his first two or three turns while giving his name and date of birth, then asks "can we speak English, please?" and continues the rest of the call in English. He asks to cancel his cleaning on Thursday 3 December at 14:30 while keeping his later cleaning on 11 December. Once the agent reads back the cancellation of the 3 December cleaning in English, he confirms it.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: cancel, appointment: a_00000805}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Switches to English as soon as the caller does and stays in English for the rest of the call"
+  - "Cancels only the Thursday 3 December cleaning and leaves the 11 December appointment untouched"

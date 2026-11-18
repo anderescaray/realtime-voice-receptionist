@@ -1,0 +1,32 @@
+id: book_known-en-01
+type: book_known
+language: en
+now: "2026-11-18T10:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A 36-year-old British translator living in Madrid who sometimes mixes up day-month and month-day date order when speaking quickly.
+  She is friendly, apologetic when she spots her mistake, and cooperative throughout the call.
+facts:
+  name: "Sarah Taylor"
+  dob: "1990-02-06"
+  wrong_dobs: ["1990-06-02"]
+goal: >
+  She wants to book a dental cleaning with the hygienist for next week (23 to 27 November) in the morning.
+  When giving her details at first, she accidentally swaps the day and month of her birth date and says June 2nd, 1990 ("1990-06-02").
+  Once the receptionist reports that no record matches that date of birth and asks her to double-check, she realises the mix-up and gives her true date of birth, 6 February 1990 ("1990-02-06").
+  She accepts the first morning cleaning slot with the hygienist offered for next week and says "yes, please" at the read-back.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: book, treatment: cleaning, patient: p_0009, practitioner: d_torres, after: "2026-11-23", before: "2026-11-28", part_of_day: morning}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Does not reveal any stored date of birth or other patient details when the first lookup fails"
+  - "Asks the caller to check and repeat her date of birth after the initial mismatch"
+  - "Identifies her once she gives 6 February 1990 and reads back the morning cleaning slot with Elena Torres before saving"

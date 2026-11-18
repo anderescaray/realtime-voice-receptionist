@@ -1,0 +1,27 @@
+id: message-en-01
+type: message
+language: en
+now: "2026-11-18T12:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  Emily Taylor is a 29-year-old administrative coordinator calling in English during her lunch break. She is polite, organized, and concise.
+facts:
+  name: "Emily Taylor"
+  dob: "1997-04-16"
+  phone: "+442079460010"
+goal: >
+  She calls because she needs a copy of last month's invoice to send to her dental insurer. She does not want to book, move, or cancel any appointment. When the agent explains that it cannot issue or send invoices and offers to leave a message for the front desk, she agrees and gives her name, phone number, and the details of her request.
+max_turns: 12
+expect:
+  outcome: no_action
+  changes: []
+  no_action_reason: message_taken
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: [book, move, cancel]
+judge:
+  - "Clearly explains that sending an invoice is outside what the automated assistant can do directly"
+  - "Offers to take a message for the front desk and records her contact details and invoice request"
+  - "Records the no-action reason message_taken, not out_of_scope"

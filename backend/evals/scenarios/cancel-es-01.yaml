@@ -1,0 +1,32 @@
+id: cancel-es-01
+type: cancel
+language: es
+now: "2026-11-24T12:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A straightforward shop owner in his sixties who is polite and clear about what he needs.
+  He knows he has more than one appointment booked at the clinic.
+facts:
+  name: "Antonio Cano Ramírez"
+  dob: "1965-09-19"
+  appointment: "filling, Wednesday 9 December at 14:45"
+goal: >
+  He calls to cancel only his filling on Wednesday 9 December in the early afternoon because
+  another dentist already did that filling, while keeping his other booked appointments intact.
+  He gives his name and date of birth and confirms that the December filling is the only one
+  he wants removed. Once the agent stages the cancellation of the 9 December filling and reads
+  it back, he confirms with a clear "sí, por favor".
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: cancel, appointment: a_00000852}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: [move]
+judge:
+  - "Confirms which appointment is meant before cancelling and reads back the 9 December filling"
+  - "Cancels only the 9 December filling and leaves the caller's other appointments untouched"

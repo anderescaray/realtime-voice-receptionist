@@ -1,0 +1,27 @@
+id: info-es-01
+type: info
+language: es
+now: "2026-11-16T11:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A careful shopper comparing local dental clinics in Madrid before choosing where to go.
+  She speaks direct, courteous Spanish and only wants practical pricing and payment information today.
+facts:
+  name: "Rocío Alarcón Bermejo"
+goal: >
+  She is not a patient and is calling solely for information: she asks how much a dental cleaning ("una limpieza") and a filling ("un empaste") cost, whether the clinic works with private dental insurance policies, and what payment methods the clinic accepts.
+  She does not wish to book an appointment during this call; once her questions have been answered, she thanks the receptionist and says she will think it over and call back later ("lo miro y ya les llamo").
+max_turns: 16
+expect:
+  outcome: no_action
+  changes: []
+  no_action_reason: info_only
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: [book, move, cancel, register_patient]
+judge:
+  - "Quotes only the prices from the clinic's catalogue (60 € for a cleaning and 70 € for a filling)"
+  - "States insurance and payment details only as a clinic_info result gives them; otherwise says it does not have that information and promises no coverage"
+  - "Does not press the caller to identify herself or book when she says she only wants information"

@@ -1,0 +1,29 @@
+id: book_known-es-01
+type: book_known
+language: es
+now: "2026-11-16T09:30:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A 27-year-old freelance graphic designer with a flexible schedule.
+  He speaks brisk, upbeat Spanish and gets straight to the point.
+facts:
+  name: "Sergio González Márquez"
+  dob: "1999-04-22"
+goal: >
+  He is an existing patient who wants to book a routine check-up ("una revisión") as soon as possible, with any dentist and at any time of day.
+  He gives his full name and date of birth when asked to identify himself.
+  He immediately accepts the earliest available slot the receptionist offers and confirms with a clear "sí, perfecto" once the details are read back.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: book, treatment: checkup, patient: p_0026, after: "2026-11-17", before: "2026-11-18"}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Offers the earliest available check-up slot starting tomorrow (Tuesday 17 November), never a same-day slot today"
+  - "Identifies the caller by name and date of birth and reads back the day and time before saving the appointment"

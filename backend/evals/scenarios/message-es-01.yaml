@@ -1,0 +1,28 @@
+id: message-es-01
+type: message
+language: es
+now: "2026-11-23T10:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  Gloria is an elderly retiree calling in Spanish, polite and gentle but a little confused about her own date of birth. She becomes slightly flustered when the dates do not match, yet remains warm and grateful for patient help.
+facts:
+  name: "Gloria Ramírez"
+  phone: "+442079460039"
+  wrong_dobs: ["1947-12-26", "1946-11-26", "1947-11-16"]
+goal: >
+  She wants to check the time of her next appointment. When asked for her date of birth, she gives the three wrong dates in order: first 1947-12-26, then 1946-11-26 on the second try, and finally 1947-11-16 on the third try, never giving the right one. If asked for it a fourth time, she says she is not sure of the date any more. When the agent can no longer look her up and offers to take a message, she accepts and gives her phone number so the clinic can call her back with her appointment time.
+max_turns: 18
+expect:
+  outcome: no_action
+  changes: []
+  no_action_reason: message_taken
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: [list_appointments]
+judge:
+  - "Never reveals any appointment, date of birth or other data while she is not identified"
+  - "Stays patient and kind across all three failed identification attempts"
+  - "Offers a callback and records a message for the clinic to call her back"
+  - "Records the no-action reason message_taken, not not_identified"

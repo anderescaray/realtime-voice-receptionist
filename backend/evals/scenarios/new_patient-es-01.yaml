@@ -1,0 +1,33 @@
+id: new_patient-es-01
+type: new_patient
+language: es
+now: "2026-11-17T13:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A 30-year-old bakery shift supervisor calling the clinic for the first time.
+  She speaks clear, friendly Peninsular Spanish at a steady pace and answers questions directly without rambling.
+facts:
+  name: "Iratxe Olabarria Zubizarreta"
+  dob: "1996-02-14"
+  phone: "+442079460901"
+goal: >
+  She has never visited the clinic before and wants to book her first check-up ("una primera revisión") for next week, between Monday 23 and Friday 27 November.
+  Because she works morning shifts, she can only attend in the afternoon.
+  She provides her full name with both surnames, date of birth, and phone number whenever the receptionist asks for them.
+  She accepts the first afternoon slot offered for next week and gives a clear affirmative confirmation ("sí, perfecto") after the receptionist reads back the appointment details.
+max_turns: 16
+expect:
+  outcome: changed
+  changes:
+    - {action: register, patient: new}
+    - {action: book, treatment: checkup, patient: new, after: "2026-11-23", before: "2026-11-28", part_of_day: afternoon}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Collects the caller's first name, both surnames, date of birth, and phone number before registering and booking"
+  - "Reads back the day and time of the appointment and waits for the caller's confirmation before saving"
+  - "Offers only afternoon slots (starting at 14:00 or later) during the week of 23 to 27 November"

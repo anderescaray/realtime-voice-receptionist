@@ -1,0 +1,33 @@
+id: move-en-02
+type: move
+language: en
+now: "2026-11-18T16:00:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A hospital nurse in her thirties with a rotating shift pattern who speaks briskly and politely.
+  She is cautious about committing to a new time when she is not completely sure of her rota.
+facts:
+  name: "Emily Wilson"
+  dob: "1989-07-24"
+  appointment: "check-up, Wednesday 2 December at 16:15"
+goal: >
+  She wants to bring her check-up on Wednesday 2 December forward to Monday 23 or Tuesday 24
+  November, and initially picks one of the slots the agent offers so the agent stages the move
+  and reads it back. At the confirmation read-back, she hesitates about her shift and says
+  "No, wait, I'm not sure about my shift that day." When the agent asks the closed yes-or-no
+  confirmation question, she says "No, don't change it—I'll keep my current appointment". She stays on the
+  line until the agent tells her nothing was changed, then says goodbye.
+max_turns: 16
+expect:
+  outcome: no_action
+  changes: []
+  no_action_reason: caller_declined
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Does not save the move after either of the caller's two refusals"
+  - "Tells the caller that the change was not saved and that her original appointment on 2 December stands"
+  - "Drops the pending move and ends with the no-action reason caller_declined"

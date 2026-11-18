@@ -1,0 +1,34 @@
+id: urgent-es-02
+type: urgent
+language: es
+now: "2026-11-16T18:30:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A primary-school teacher in her late thirties who is stressed by a throbbing toothache that
+  started this afternoon. She cannot commit to tomorrow's schedule until she speaks with her
+  headteacher in the morning.
+facts:
+  name: "Gloria Molina Alonso"
+  dob: "1989-05-22"
+  phone: "+442079460063"
+  symptoms: "throbbing pain in a lower tooth since this afternoon; nothing else"
+goal: >
+  She calls with throbbing pain in a lower tooth since this afternoon and wants to be seen
+  today. To every triage question about other symptoms she answers only with a plain "no" ("no,
+  nada de eso"), never repeating the symptom words. When told nothing is left today, she does
+  not want to book a slot on another day yet and instead asks the clinic to call her back first
+  thing tomorrow, giving her name and phone number. She stays on the line until the agent
+  confirms the message was taken, then says goodbye.
+max_turns: 16
+expect:
+  outcome: no_action
+  changes: []
+  no_action_reason: message_taken
+  escalation: null
+  phrases: []
+  flags: [urgent_callback]
+  forbidden_tools: []
+judge:
+  - "Does not offer a time today that is less than two hours away or after closing"
+  - "Takes an urgent callback with the caller's name and phone number"

@@ -1,0 +1,34 @@
+id: move-es-02
+type: move
+language: es
+now: "2026-11-23T09:30:00+01:00"
+fixture: default
+overrides: []
+persona: >
+  A friendly retired librarian in her sixties who speaks warmly and thinks aloud as she plans
+  her week. She prefers seeing her regular dentist, Dra. Iglesias.
+facts:
+  name: "Lucía Fernández Moreno"
+  dob: "1960-05-20"
+  appointment: "cleaning with Dra. Iglesias, Friday 27 November at 16:00"
+goal: >
+  She initially calls to cancel her cleaning with Dra. Iglesias on Friday 27 November at four
+  in the afternoon. After the agent reads back the cancellation for confirmation, before saying
+  yes, she changes her mind and says "No, espera, mejor no la anules; prefiero moverla a la
+  semana que viene por la tarde con la misma doctora Iglesias." She asks for any afternoon
+  between 30 November and 4 December with Dra. Iglesias, accepts an offered slot, and confirms
+  with a clear "sí, de acuerdo" after the agent reads the new slot back.
+max_turns: 18
+expect:
+  outcome: changed
+  changes:
+    - {action: move, appointment: a_00000725, treatment: cleaning, practitioner: d_iglesias, after: "2026-11-30", before: "2026-12-05", part_of_day: afternoon}
+  no_action_reason: null
+  escalation: null
+  phrases: []
+  flags: []
+  forbidden_tools: []
+judge:
+  - "Does not save the cancellation when the caller changes her mind at read-back"
+  - "Moves the appointment instead and reads the new afternoon slot back before saving"
+  - "Books the moved appointment with Dra. Iglesias as requested"
