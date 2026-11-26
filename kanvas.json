@@ -680,6 +680,11 @@
           "at": "2026-11-10T20:15:06Z",
           "by": "engine",
           "text": "README backlog (from EN-01): say the demo clinic and patients use a UK drama phone number (Ofcom range +44 20 7946 0xxx) because Spain has no range reserved for fiction."
+        },
+        {
+          "at": "2026-11-26T22:36:39Z",
+          "by": "claude-code",
+          "text": "A short first README with an animated demo (docs/demo.svg) is on branch claude/brave-carson-d2dnxb. LN-02 still covers the full README: results tables and Scaling up."
         }
       ]
     },
